@@ -767,6 +767,8 @@ MB12XX	*g_dev;
 void	start();
 void	stop();
 void	test();
+void	test2();
+void	test3();
 void	reset();
 void	info();
 
@@ -890,10 +892,11 @@ test()
 
 		/* Print the sonar rangefinder report sonar distance vector */
 		for (uint8_t count = 0; count < MB12XX_MAX_RANGEFINDERS; count++) {
-			warnx("measurement: %0.3f of sonar %u", (double)report.distance_vector[count], count + 1);
+			warnx("measurement: %20.10f of sonar %u", (double)report.distance_vector[count], count + 1);
 		}
 
 		warnx("time:        %lld", report.timestamp);
+		warnx("size of the report: %d", sizeof(report));
 	}
 
 	/* reset the sensor polling to default rate */
@@ -902,6 +905,147 @@ test()
 	}
 
 	errx(0, "PASS");
+}
+
+void
+test2()
+{
+	struct range_finder_report report;
+	ssize_t sz;
+	int ret;
+	uint64_t previous_time_stamp=0;
+	uint64_t dt=0;
+	float frequency;
+	
+	int fd = open(MB12XX_DEVICE_PATH, O_RDONLY);
+	
+	if (fd < 0) {
+		err(1, "%s open failed (try 'mb12xx start' if the driver is not running", MB12XX_DEVICE_PATH);
+	}
+	
+	/* do a simple demand read */
+	sz = read(fd, &report, sizeof(report));
+	
+	if (sz != sizeof(report)) {
+		err(1, "immediate read failed");
+	}
+	
+	warnx("single read");
+	warnx("measurement: %0.2f of sonar %d", (double)report.distance_vector[report.just_updated], report.just_updated);
+	warnx("time:        %lld", report.timestamp);
+	previous_time_stamp = report.timestamp;
+
+	/* start the sensor polling at 10Hz */
+	if (OK != ioctl(fd, SENSORIOCSPOLLRATE, 10)) {
+		errx(1, "failed to set 10Hz poll rate");
+	}
+	
+	//	warnx("-------\ntype: %u, distance: %10.5f, min_d=%10.5f, max_d=%10.5f\n, valid=%u\n--------",report.type,(double)report.distance,(double)report.minimum_distance,(double)report.maximum_distance,report.valid);				/**< type, following RANGE_FINDER_TYPE enum */
+	
+	for (int i = 0; i < 100; i++) {
+		/* wait for sensor update of 1 file descriptor for 10 ms */
+		struct pollfd fds;
+		
+		/* wait for data to be ready */
+		fds.fd = fd;
+		fds.events = POLLIN;
+		ret = poll(&fds, 1, 200);
+		
+		if (ret != 1) {
+			errx(1, "timed out waiting for sensor data");
+		}
+		
+		sz = read(fd, &report, sizeof(report));
+		
+		dt = report.timestamp - previous_time_stamp; // micro seconds
+		frequency = 1E6/dt; // Hz
+		previous_time_stamp=report.timestamp;
+		
+		if (sz != sizeof(report)) {
+			err(1, "read failed");
+		}
+		
+		warnx("measurement %u: %2.3f meters, time: %lld, dt= %lld, reading frequency=%8.3f", i, (double)report.distance,report.timestamp, dt, (double)frequency);
+	}
+	
+	/* reset the sensor polling to default rate */
+	if (OK != ioctl(fd, SENSORIOCSPOLLRATE, SENSOR_POLLRATE_DEFAULT)) {
+		errx(1, "failed to set default poll rate");
+	}
+	
+	errx(0, "PASS");
+	
+}
+
+	
+void
+test3()
+{
+	struct range_finder_report report;
+	ssize_t sz;
+	int ret;
+	uint64_t previous_time_stamp=0;
+	uint64_t dt=0;
+	float frequency;
+	
+	int fd = open(MB12XX_DEVICE_PATH, O_RDONLY);
+	
+	if (fd < 0) {
+		err(1, "%s open failed (try 'mb12xx start' if the driver is not running", MB12XX_DEVICE_PATH);
+	}
+	
+	/* do a simple demand read */
+	sz = read(fd, &report, sizeof(report));
+	
+	if (sz != sizeof(report)) {
+		err(1, "immediate read failed");
+	}
+	
+	warnx("single read");
+	warnx("measurement: %0.2f of sonar %d", (double)report.distance_vector[report.just_updated], report.just_updated);
+	warnx("time:        %lld", report.timestamp);
+	previous_time_stamp = report.timestamp;
+	
+	/* start the sensor polling at 2Hz */
+	if (OK != ioctl(fd, SENSORIOCSPOLLRATE, 9)) {
+		errx(1, "failed to set 9Hz poll rate");
+	}
+	
+	//	warnx("-------\ntype: %u, distance: %10.5f, min_d=%10.5f, max_d=%10.5f\n, valid=%u\n--------",report.type,(double)report.distance,(double)report.minimum_distance,(double)report.maximum_distance,report.valid);				/**< type, following RANGE_FINDER_TYPE enum */
+	
+	for (int i = 0; i < 100; i++) {
+		/* wait for sensor update of 1 file descriptor for 10 ms */
+		struct pollfd fds;
+		
+		/* wait for data to be ready */
+		fds.fd = fd;
+		fds.events = POLLIN;
+		ret = poll(&fds, 1, 200);
+		
+		if (ret != 1) {
+			errx(1, "timed out waiting for sensor data");
+		}
+		
+		sz = read(fd, &report, sizeof(report));
+		
+		dt = report.timestamp - previous_time_stamp; // micro seconds
+		frequency = 1E6/dt; // Hz
+		previous_time_stamp=report.timestamp;
+		
+		if (sz != sizeof(report)) {
+			err(1, "read failed");
+		}
+		
+		warnx("measurement %u: %2.3f meters, time: %lld, dt= %lld, reading frequency=%8.3f", i, (double)report.distance,report.timestamp, dt, (double)frequency);
+	}
+	
+	/* reset the sensor polling to default rate */
+	if (OK != ioctl(fd, SENSORIOCSPOLLRATE, SENSOR_POLLRATE_DEFAULT)) {
+		errx(1, "failed to set default poll rate");
+	}
+	
+	errx(0, "PASS");
+	
 }
 
 /**
@@ -970,6 +1114,20 @@ mb12xx_main(int argc, char *argv[])
 	}
 
 	/*
+	 * Test the driver/device with second test.
+	 */
+	if (!strcmp(argv[1], "test2")) {
+		mb12xx::test2();
+	}
+
+	/*
+	 * Test the driver/device with second test.
+	 */
+	if (!strcmp(argv[1], "test3")) {
+		mb12xx::test3();
+	}
+
+	/*
 	 * Reset the driver.
 	 */
 	if (!strcmp(argv[1], "reset")) {
@@ -983,5 +1141,5 @@ mb12xx_main(int argc, char *argv[])
 		mb12xx::info();
 	}
 
-	errx(1, "unrecognized command, try 'start', 'test', 'reset' or 'info'");
+	errx(1, "unrecognized command, try 'start', 'test', 'test2', 'test3', 'reset' or 'info'");
 }

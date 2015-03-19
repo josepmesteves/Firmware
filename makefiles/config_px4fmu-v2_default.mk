@@ -121,6 +121,11 @@ MODULES		+= lib/launchdetection
 MODULES		+= platforms/nuttx
 
 #
+# My own apps
+#
+MODULES		+= modules/px4_sensor_measurement
+
+#
 # OBC challenge
 #
 MODULES		+= modules/bottle_drop

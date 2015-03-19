@@ -215,6 +215,29 @@ static void write_debug_log(const char *msg, float dt, float x_est[2], float y_e
  ****************************************************************************/
 int position_estimator_inav_thread_main(int argc, char *argv[])
 {
+	
+	float verbose_signal1=0;
+	int verbose_counter1=0;
+	float verbose_signal2=0;
+	int verbose_counter2=0;
+	float verbose_signal3=0;
+	int verbose_counter3=0;
+	float verbose_signal4=0;
+	int verbose_counter4=0;
+	float verbose_signal5=0;
+	int verbose_counter5=0;
+	float verbose_signal6=0;
+	int verbose_counter6=0;
+	float verbose_signal7=0;
+	int verbose_counter7=0;
+	float verbose_signal8=0;
+	int verbose_counter8=0;
+	float verbose_signal9=0;
+	int verbose_counter9=0;
+	
+	
+	
+	
 	int mavlink_fd;
 	mavlink_fd = open(MAVLINK_LOG_DEVICE, 0);
 
@@ -457,6 +480,11 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						sensor.accelerometer_m_s2[0] -= acc_bias[0];
 						sensor.accelerometer_m_s2[1] -= acc_bias[1];
 						sensor.accelerometer_m_s2[2] -= acc_bias[2];
+						
+						verbose_signal4=acc_bias[2];
+						verbose_counter4++;
+						verbose_signal8=sensor.accelerometer_m_s2[2];
+						verbose_counter8++;
 
 						/* transform acceleration vector from body frame to NED frame */
 						for (int i = 0; i < 3; i++) {
@@ -481,6 +509,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					corr_baro = baro_offset - sensor.baro_alt_meter - z_est[0];
 					baro_timestamp = sensor.baro_timestamp;
 					baro_updates++;
+					verbose_signal9=baro_offset;
+					verbose_counter9++;
 				}
 			}
 
@@ -964,6 +994,11 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		}
 
 		accel_bias_corr[2] -= corr_baro * params.w_z_baro * params.w_z_baro;
+		
+		verbose_signal6=corr_baro * params.w_z_baro * params.w_z_baro;
+		verbose_counter6++;
+		verbose_signal7=accel_bias_corr[2];
+		verbose_counter7++;
 
 		/* transform error vector from NED frame to body frame */
 		for (int i = 0; i < 3; i++) {
@@ -977,9 +1012,16 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				acc_bias[i] += c * params.w_acc_bias * dt;
 			}
 		}
+		verbose_signal5=accel_bias_corr[2];
+		verbose_counter5++;
+		
+		verbose_signal1=z_est[0];
+		verbose_counter1++;
 
 		/* inertial filter prediction for altitude */
 		inertial_filter_predict(dt, z_est, acc[2]);
+		verbose_signal2=z_est[0];
+		verbose_counter2++;
 
 		if (!(isfinite(z_est[0]) && isfinite(z_est[1]))) {
 			write_debug_log("BAD ESTIMATE AFTER Z PREDICTION", dt, x_est, y_est, z_est, x_est_prev, y_est_prev, z_est_prev, acc, corr_gps, w_xy_gps_p, w_xy_gps_v);
@@ -988,6 +1030,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 		/* inertial filter correction for altitude */
 		inertial_filter_correct(corr_baro, dt, z_est, 0, params.w_z_baro);
+		verbose_signal3=z_est[0];
+		verbose_counter3++;
 
 		if (use_gps_z) {
 			epv = fminf(epv, gps.epv);
@@ -1165,6 +1209,22 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					orb_publish(ORB_ID(vehicle_global_position), vehicle_global_position_pub, &global_pos);
 				}
 			}
+			printf("%.3f   \t%.3f   \t%.3f   \t%.3f   \t%.3f   \t%.3f   \t%.3f   \t%.3f   \t%.3f   \t",
+				   (double)verbose_signal1,
+				   (double)verbose_signal2,
+				   (double)verbose_signal3,
+				   (double)verbose_signal4,
+				   (double)verbose_signal5,
+				   (double)verbose_signal6,
+				   (double)verbose_signal7,
+				   (double)verbose_signal8,
+				   (double)verbose_signal9,
+				   (double)z_est[0]);
+			printf("%5.0f   \t\t%5.0f   \n",
+				   (double)verbose_counter1,
+
+				   (double)verbose_counter9);
+
 		}
 	}
 
