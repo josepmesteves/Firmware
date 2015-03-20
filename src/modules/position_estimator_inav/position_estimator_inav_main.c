@@ -66,6 +66,7 @@
 #include <uORB/topics/vision_position_estimate.h>
 #include <uORB/topics/home_position.h>
 #include <uORB/topics/optical_flow.h>
+#include <drivers/drv_range_finder.h>
 #include <mavlink/mavlink_log.h>
 #include <poll.h>
 #include <systemlib/err.h>
@@ -215,29 +216,6 @@ static void write_debug_log(const char *msg, float dt, float x_est[2], float y_e
  ****************************************************************************/
 int position_estimator_inav_thread_main(int argc, char *argv[])
 {
-	
-	float verbose_signal1=0;
-	int verbose_counter1=0;
-	float verbose_signal2=0;
-	int verbose_counter2=0;
-	float verbose_signal3=0;
-	int verbose_counter3=0;
-	float verbose_signal4=0;
-	int verbose_counter4=0;
-	float verbose_signal5=0;
-	int verbose_counter5=0;
-	float verbose_signal6=0;
-	int verbose_counter6=0;
-	float verbose_signal7=0;
-	int verbose_counter7=0;
-	float verbose_signal8=0;
-	int verbose_counter8=0;
-	float verbose_signal9=0;
-	int verbose_counter9=0;
-	
-	
-	
-	
 	int mavlink_fd;
 	mavlink_fd = open(MAVLINK_LOG_DEVICE, 0);
 
@@ -272,8 +250,10 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	int baro_init_cnt = 0;
 	int baro_init_num = 200;
 	float baro_offset = 0.0f;		// baro offset for reference altitude, initialized on start, then adjusted
+/*
 	float surface_offset = 0.0f;	// ground level offset from reference altitude
 	float surface_offset_rate = 0.0f;	// surface offset change rate
+*/
 
 	hrt_abstime accel_timestamp = 0;
 	hrt_abstime baro_timestamp = 0;
@@ -295,6 +275,9 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	hrt_abstime pub_last = hrt_absolute_time();
 
 	hrt_abstime t_prev = 0;
+	
+	// TODO tune weight
+	int sonar_weight = 0.5;
 
 	/* store error when sensor updates, but correct on each time step to avoid jumps in estimated value */
 	float acc[] = { 0.0f, 0.0f, 0.0f };	// N E D
@@ -316,20 +299,26 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 	float corr_sonar = 0.0f;
 	float corr_sonar_filtered = 0.0f;
+	float acceptable_change = 0.0f;
 
 	float corr_flow[] = { 0.0f, 0.0f };	// N E
 	float w_flow = 0.0f;
 
-	float sonar_prev = 0.0f;
+	float sonar_last_valid = 0.0f;
+	float sonar_new = 0.0f;
 	//hrt_abstime flow_prev = 0;			// time of last flow measurement
 	hrt_abstime sonar_time = 0;			// time of last sonar measurement (not filtered)
+	hrt_abstime sonar_time_prev = 0;	// time of previous sonar measurement (not filtered)
 	hrt_abstime sonar_valid_time = 0;	// time of last sonar measurement used for correction (filtered)
 
+	bool sonar_init = false;		// sonar time is initialized
 	bool gps_valid = false;			// GPS is valid
 	bool sonar_valid = false;		// sonar is valid
+	bool sonar_vel_valid = false;	// sonar is valid
 	bool flow_valid = false;		// flow is valid
 	bool flow_accurate = false;		// flow should be accurate (this flag not updated if flow_valid == false)
 	bool vision_valid = false;
+	bool sonar_updated = false;
 
 	/* declare and safely initialize all structs */
 	struct actuator_controls_s actuator;
@@ -352,6 +341,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	memset(&vision, 0, sizeof(vision));
 	struct vehicle_global_position_s global_pos;
 	memset(&global_pos, 0, sizeof(global_pos));
+	struct range_finder_report sonar;
+	memset(&sonar, 0, sizeof(sonar));
 
 	/* subscribe */
 	int parameter_update_sub = orb_subscribe(ORB_ID(parameter_update));
@@ -363,6 +354,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	int vehicle_gps_position_sub = orb_subscribe(ORB_ID(vehicle_gps_position));
 	int vision_position_estimate_sub = orb_subscribe(ORB_ID(vision_position_estimate));
 	int home_position_sub = orb_subscribe(ORB_ID(home_position));
+	int sensor_sonar_sub_fd = orb_subscribe(ORB_ID(sensor_range_finder));
 
 	/* advertise */
 	orb_advert_t vehicle_local_position_pub = orb_advertise(ORB_ID(vehicle_local_position), &local_pos);
@@ -382,6 +374,44 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	struct pollfd fds_init[1] = {
 		{ .fd = sensor_combined_sub, .events = POLLIN },
 	};
+
+	
+	// temporary
+//	bool already_printed_flag=false;
+	float verbose_signal1=0;
+	int verbose_counter1=0;
+	float verbose_signal2=0;
+	int verbose_counter2=0;
+	float verbose_signal3=0;
+//	int verbose_counter3=0;
+	float verbose_signal4=0;
+	float verbose_signal5=0;
+//	int verbose_counter5=0;
+	float verbose_signal6=0;
+//	int verbose_counter6=0;
+	float verbose_signal7=0;
+//	int verbose_counter7=0;
+	float verbose_signal8=0;
+	int verbose_counter8=0;
+	float verbose_signal9=0;
+	int verbose_counter9=0;
+	bool verbose_signal10=0;
+	int verbose_counter10=0;
+	bool verbose_signal11=0;
+	int verbose_counter11=0;
+	float verbose_signal12=0.0f;
+	bool verbose_signal13=false;
+	float verbose_signal14=0.0f;
+	float verbose_signal15=0.0f;
+	float verbose_signal16=0.0f;
+	float verbose_signal17=0.0f;
+
+	bool new_verbose_signal1=false;
+	int new_verbose_signal2=0;
+	int new_verbose_signal3=0;
+	int new_verbose_signal4=0;
+
+
 
 	/* wait for initial baro value */
 	bool wait_baro = true;
@@ -426,6 +456,11 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	struct pollfd fds[1] = {
 		{ .fd = vehicle_attitude_sub, .events = POLLIN },
 	};
+	
+	
+	// temporary
+	z_est[0]=-0.7;
+	
 
 	while (!thread_should_exit) {
 		int ret = poll(fds, 1, 20); // wait maximal 20 ms = 50 Hz minimum rate
@@ -480,11 +515,10 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						sensor.accelerometer_m_s2[0] -= acc_bias[0];
 						sensor.accelerometer_m_s2[1] -= acc_bias[1];
 						sensor.accelerometer_m_s2[2] -= acc_bias[2];
-						
-						verbose_signal4=acc_bias[2];
-						verbose_counter4++;
-						verbose_signal8=sensor.accelerometer_m_s2[2];
-						verbose_counter8++;
+
+						// temporary
+						verbose_signal9=sensor.accelerometer_m_s2[2];
+						verbose_counter9++;
 
 						/* transform acceleration vector from body frame to NED frame */
 						for (int i = 0; i < 3; i++) {
@@ -506,64 +540,156 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				}
 
 				if (sensor.baro_timestamp != baro_timestamp) {
+					// warn: might be a good idea to take the sonar component from the corr_baro. But I am not confident about it, so I won't do it now
+					// TODO take measurements, because I can't see how this is right: negative - (big) negative - (small) negative = (big) positive
 					corr_baro = baro_offset - sensor.baro_alt_meter - z_est[0];
+					// corr_baro = - (baro_offset - sensor.baro_alt_meter) - z_est[0]; // check if it shouldn't be this
 					baro_timestamp = sensor.baro_timestamp;
 					baro_updates++;
-					verbose_signal9=baro_offset;
-					verbose_counter9++;
+
+					// temporary - baro offset
+					verbose_signal8=baro_offset;
+					verbose_counter8++;
 				}
 			}
-
-			/* optical flow */
-			orb_check(optical_flow_sub, &updated);
+			
+			
+			/* sonar */
+			orb_check(sensor_sonar_sub_fd, &updated);
 
 			if (updated) {
-				orb_copy(ORB_ID(optical_flow), optical_flow_sub, &flow);
+				
+				//temporary - new sonar measurement - if 1
+				verbose_signal13=true;
+
+
+				sonar_updated = true;
+				orb_copy(ORB_ID(sensor_range_finder), sensor_sonar_sub_fd, &sonar);
 
 				/* calculate time from previous update */
 //				float flow_dt = flow_prev > 0 ? (flow.flow_timestamp - flow_prev) * 1e-6f : 0.1f;
 //				flow_prev = flow.flow_timestamp;
 
-				if ((flow.ground_distance_m > 0.31f) &&
-					(flow.ground_distance_m < 4.0f) &&
-					(PX4_R(att.R, 2, 2) > 0.7f) &&
-					(fabsf(flow.ground_distance_m - sonar_prev) > FLT_EPSILON)) {
+				// temporary - measuredsonar distance
+				verbose_signal12=sonar.distance;
+				verbose_signal14=PX4_R(att.R, 2, 2);
+				verbose_signal15=fabsf(sonar.distance - sonar_new);
 
+				if ((sonar.distance > 0.2f) &&
+					(sonar.distance < 7.6f) &&
+					(PX4_R(att.R, 2, 2) > 0.7f)) { // TODO understand this, otherwise change it
+
+					// temporary - if 2
+					new_verbose_signal4 = 1;
+
+					if (sonar_init){
+						sonar_time_prev = sonar_time;
+						sonar_last_valid = sonar_new;
+					}else{
+						sonar_last_valid = sonar.distance;
+						sonar_init=true;
+					}
+					
+					
 					sonar_time = t;
-					sonar_prev = flow.ground_distance_m;
-					corr_sonar = flow.ground_distance_m + surface_offset + z_est[0];
+					sonar_new = sonar.distance;
+					corr_sonar = sonar.distance + z_est[0];
 					corr_sonar_filtered += (corr_sonar - corr_sonar_filtered) * params.sonar_filt;
+ 
+					
+					acceptable_change += (sonar_new - sonar_last_valid) * params.sonar_filt; // changed sonar_filt from .05 to .1
+// sonar_last_valid maintains the same value (last valid measurement) if the current measurement is not considered to be valid
 
-					if (fabsf(corr_sonar) > params.sonar_err) {
-						/* correction is too large: spike or new ground level? */
-						if (fabsf(corr_sonar - corr_sonar_filtered) > params.sonar_err) {
+					// temporary - corr_sonar_filtered
+					verbose_signal16=corr_sonar_filtered;
+					verbose_signal17=corr_sonar;
+
+					if (fabsf(corr_sonar) > params.sonar_err) { // changed sonar_err from .3 to .2
+						// temporary - if 3
+						new_verbose_signal2 = 1;
+
+						/* correction of altitude is too large: spike or new ground level? */
+//						if (fabsf(corr_sonar - corr_sonar_filtered) > params.sonar_err) {
+						if (fabsf(sonar_new - ( sonar_last_valid + acceptable_change)) > params.sonar_err) { // the idea is that if it is a new altitude, then the (acceptable_change +  last_valid_measurement)  will eventually catch up with the measurement of the sonar, so it is not a spike.
 							/* spike detected, ignore */
-							corr_sonar = 0.0f;
-							sonar_valid = false;
 
+							new_verbose_signal3 = 1;
+
+							corr_sonar = 0.0f; // do not correct
+							sonar_new = sonar_last_valid; // maintain last sonar measurement
+							sonar_valid = false;
 						} else {
 							/* new ground level */
+							
+							// temporary - if 4
+							new_verbose_signal3 = 0;
+
+
+							/*
 							surface_offset -= corr_sonar;
 							surface_offset_rate = 0.0f;
 							corr_sonar = 0.0f;
 							corr_sonar_filtered = 0.0f;
+							*/
+							acceptable_change = 0.0f;
 							sonar_valid_time = t;
+							if(sonar_valid){
+								// sonar measurement was already valid on the previous iteration
+								sonar_vel_valid = true; // sonar measurement is valid two times in a row
+							}else{
+								sonar_vel_valid = false;
+							}
 							sonar_valid = true;
+							/*
 							local_pos.surface_bottom_timestamp = t;
 							mavlink_log_info(mavlink_fd, "[inav] new surface level: %d", (int)surface_offset);
+							 */
+							//float new_altitude = corr_sonar - z_est[0]; // warn: sign correct?
+							//mavlink_log_info(mavlink_fd, "[inav] new altitude level: %d", (int)new_altitude);
 						}
 
 					} else {
+						// temporary
+						new_verbose_signal2 = 0;
+						new_verbose_signal3 = -1;
+
 						/* correction is ok, use it */
 						sonar_valid_time = t;
+						if(sonar_valid){
+							// sonar measurement was already valid on the previous iteration
+							sonar_vel_valid = true;
+						}else{
+							sonar_vel_valid = false;
+						}
 						sonar_valid = true;
+						acceptable_change = 0.0f;
 					}
 				}
+				
+				// temporary
+				else{new_verbose_signal4 = 0;}
+			}
+			
+			//temporary - new sonar measurement
+			else{
+				verbose_signal13=false;
+				new_verbose_signal2 = -1;
+				new_verbose_signal3 = -1;
+				new_verbose_signal4 = -1;
+			}
+			new_verbose_signal1 = sonar_valid;
+
+
+			/* optical flow */
+			orb_check(optical_flow_sub, &updated);
+			
+			if(updated){
+				// DONE (after adding the sensor) separated flow from sonar
 
 				float flow_q = flow.quality / 255.0f;
-				float dist_bottom = - z_est[0] - surface_offset;
-
-				if (dist_bottom > 0.3f && flow_q > params.flow_q_min && (t < sonar_valid_time + sonar_valid_timeout) && PX4_R(att.R, 2, 2) > 0.7f) {
+//				float dist_bottom = - z_est[0] - surface_offset;
+				float dist_bottom = - z_est[0];
+							if (dist_bottom > 0.2f && flow_q > params.flow_q_min && (t < sonar_valid_time + sonar_valid_timeout) && PX4_R(att.R, 2, 2) > 0.7f) {
 					/* distance to surface */
 					float flow_dist = dist_bottom / PX4_R(att.R, 2, 2);
 					/* check if flow if too large for accurate measurements */
@@ -624,10 +750,33 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				flow_updates++;
 			}
 
+			if (sonar_updated && sonar_valid) {
+				/* update baro offset */
+				// When there is a new valid sonar measurement, we correct baro's bias (bias is always drifting)
+				baro_offset += sensor.baro_alt_meter + sonar_new; // set baro_offset from true altitude value (sonar)
+
+				z_est[0] = - sonar_new; // set ground truth. equivalent to line 653
+				corr_sonar = 0.0f;
+
+				// temporary
+/*				printf("------------------------------->Ground truth: %5.3f\n", (double)z_est[0]);
+				already_printed_flag=true;
+*/
+				// TODO only take the false out when I create a flag for valid velocity, which is true when I have 2 consecutive good measurements (2 consecutive sonar_valid)
+				if (sonar_init && sonar_vel_valid) { // if (sonar_init)
+					z_est[1] = (z_est[0] - sonar_last_valid) / (sonar_time - sonar_time_prev); // warn maybe I should use previous z_est instead of the previous sonar measurement
+				}
+
+				sonar_updated = false;
+			}
+
+
+
 			/* home position */
 			orb_check(home_position_sub, &updated);
 
 			if (updated) {
+				printf("[inav] Something wrong 1.\n");
 				orb_copy(ORB_ID(home_position), home_position_sub, &home);
 
 				if (home.timestamp != home_timestamp) {
@@ -670,6 +819,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				orb_check(vision_position_estimate_sub, &updated);
 
 				if (updated) {
+					printf("[inav] Something wrong 2.\n");
 					orb_copy(ORB_ID(vision_position_estimate), vision_position_estimate_sub, &vision);
 
 					static float last_vision_x = 0.0f;
@@ -736,6 +886,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			orb_check(vehicle_gps_position_sub, &updated);
 
 			if (updated) {
+				printf("[inav] Something wrong 3.\n");
 				orb_copy(ORB_ID(vehicle_gps_position), vehicle_gps_position_sub, &gps);
 
 				bool reset_est = false;
@@ -841,11 +992,18 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		}
 
 		/* check for timeout on FLOW topic */
-		if ((flow_valid || sonar_valid) && t > flow.timestamp + flow_topic_timeout) {
+		if (flow_valid && t > flow.timestamp + flow_topic_timeout) {
 			flow_valid = false;
-			sonar_valid = false;
 			warnx("FLOW timeout");
 			mavlink_log_info(mavlink_fd, "[inav] FLOW timeout");
+		}
+
+		// warn: take out? There are 2 similar blocks
+		/* check for timeout on sonar topic */
+		if (sonar_valid && t > sonar_valid_time + sonar_valid_timeout) {
+			sonar_valid = false;
+			warnx("SONAR timeout");
+			mavlink_log_info(mavlink_fd, "[inav] SONAR timeout");
 		}
 
 		/* check for timeout on GPS topic */
@@ -866,6 +1024,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		if (sonar_valid && (t > (sonar_time + sonar_timeout))) {
 			corr_sonar = 0.0f;
 			sonar_valid = false;
+			warnx("SONAR timeout");
+			mavlink_log_info(mavlink_fd, "[inav] SONAR timeout");
 		}
 
 		float dt = t_prev > 0 ? (t - t_prev) / 1000000.0f : 0.0f;
@@ -893,16 +1053,18 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 		bool dist_bottom_valid = (t < sonar_valid_time + sonar_valid_timeout);
 
+		/*
 		if (dist_bottom_valid) {
-			/* surface distance prediction */
+			// surface distance prediction
 			surface_offset += surface_offset_rate * dt;
 
-			/* surface distance correction */
+			// surface distance correction
 			if (sonar_valid) {
 				surface_offset_rate -= corr_sonar * 0.5f * params.w_z_sonar * params.w_z_sonar * dt;
 				surface_offset -= corr_sonar * params.w_z_sonar * dt;
 			}
 		}
+		*/
 
 		float w_xy_gps_p = params.w_xy_gps_p * w_gps_xy;
 		float w_xy_gps_v = params.w_xy_gps_v * w_gps_xy;
@@ -915,28 +1077,34 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 		/* reduce GPS weight if optical flow is good */
 		if (use_flow && flow_accurate) {
+			printf("[inav] Something wrong 3 1.\n");
 			w_xy_gps_p *= params.w_gps_flow;
 			w_xy_gps_v *= params.w_gps_flow;
 		}
 
+		// DONE implement baro offset correction with sonar. Line 611. Now I don't need to compensate with offs_corr because I am giving the true value for baro_offset and to corr_baro
 		/* baro offset correction */
 		if (use_gps_z) {
-			float offs_corr = corr_gps[2][0] * w_z_gps_p * dt;
+			printf("[inav] Something wrong 4.\n");
+/*			float offs_corr = corr_gps[2][0] * w_z_gps_p * dt;
 			baro_offset += offs_corr;
 			corr_baro += offs_corr;
-		}
+*/		}
+
 
 		/* accelerometer bias correction for GPS (use buffered rotation matrix) */
 		float accel_bias_corr[3] = { 0.0f, 0.0f, 0.0f };
 
 		if (use_gps_xy) {
+			printf("[inav] Something wrong 4 1.\n");
 			accel_bias_corr[0] -= corr_gps[0][0] * w_xy_gps_p * w_xy_gps_p;
 			accel_bias_corr[0] -= corr_gps[0][1] * w_xy_gps_v;
 			accel_bias_corr[1] -= corr_gps[1][0] * w_xy_gps_p * w_xy_gps_p;
 			accel_bias_corr[1] -= corr_gps[1][1] * w_xy_gps_v;
 		}
-
+		
 		if (use_gps_z) {
+			printf("[inav] Something wrong 4 2.\n");
 			accel_bias_corr[2] -= corr_gps[2][0] * w_z_gps_p * w_z_gps_p;
 			accel_bias_corr[2] -= corr_gps[2][1] * w_z_gps_v;
 		}
@@ -960,6 +1128,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		accel_bias_corr[2] = 0.0f;
 
 		if (use_vision_xy) {
+			printf("[inav] Something wrong 5.\n");
 			accel_bias_corr[0] -= corr_vision[0][0] * w_xy_vision_p * w_xy_vision_p;
 			accel_bias_corr[0] -= corr_vision[0][1] * w_xy_vision_v;
 			accel_bias_corr[1] -= corr_vision[1][0] * w_xy_vision_p * w_xy_vision_p;
@@ -967,6 +1136,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		}
 
 		if (use_vision_z) {
+			printf("[inav] Something wrong 6.\n");
 			accel_bias_corr[2] -= corr_vision[2][0] * w_z_vision_p * w_z_vision_p;
 		}
 
@@ -989,16 +1159,28 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		accel_bias_corr[2] = 0.0f;
 
 		if (use_flow) {
+			printf("[inav] Something wrong 7.\n");
 			accel_bias_corr[0] -= corr_flow[0] * params.w_xy_flow;
 			accel_bias_corr[1] -= corr_flow[1] * params.w_xy_flow;
 		}
 
+		if (sonar_valid) {
+			// if z_est is corrected directly with sonar, then corr_sonar will be 0 here
+			// warn: tune weights. is it with a minus sign?
+			// warn: maybe use previous measurement of position to calculate and correct velocity (this is not important here)
+			accel_bias_corr[2] -= corr_sonar * sonar_weight * sonar_weight;
+		}
+
 		accel_bias_corr[2] -= corr_baro * params.w_z_baro * params.w_z_baro;
-		
-		verbose_signal6=corr_baro * params.w_z_baro * params.w_z_baro;
-		verbose_counter6++;
+
+
+		// temporary - acceleration correction after baro corr , baro correction on acceleration
 		verbose_signal7=accel_bias_corr[2];
-		verbose_counter7++;
+//		verbose_counter7++;
+		verbose_signal6=corr_baro * params.w_z_baro * params.w_z_baro;
+//		verbose_counter6++;
+
+
 
 		/* transform error vector from NED frame to body frame */
 		for (int i = 0; i < 3; i++) {
@@ -1012,14 +1194,17 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				acc_bias[i] += c * params.w_acc_bias * dt;
 			}
 		}
-		verbose_signal5=accel_bias_corr[2];
-		verbose_counter5++;
-		
+
+		// temporary - total acc bias , z before prediction
+		verbose_signal5=acc_bias[2];
+//		verbose_counter5++;
 		verbose_signal1=z_est[0];
 		verbose_counter1++;
 
-		/* inertial filter prediction for altitude */
+		/* inertial filter prediction for altitude, based on last iteration's velocity estimation and corrected acceleration */
 		inertial_filter_predict(dt, z_est, acc[2]);
+
+		// temporary - z after prediction
 		verbose_signal2=z_est[0];
 		verbose_counter2++;
 
@@ -1030,10 +1215,20 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 		/* inertial filter correction for altitude */
 		inertial_filter_correct(corr_baro, dt, z_est, 0, params.w_z_baro);
+
+		// temporary - z after correction
 		verbose_signal3=z_est[0];
-		verbose_counter3++;
+//		verbose_counter3++;
+
+		// TODO tune weight. maybe add velocity correction??
+		// TODO check if corr_sonar is always zero inside the if. Should it be?
+		if(sonar_valid){
+			// if z_est is corrected directly with sonar, then corr_sonar will be 0 here
+			inertial_filter_correct(corr_sonar, dt, z_est, 0, sonar_weight);
+		 }
 
 		if (use_gps_z) {
+			printf("[inav] Something wrong 7 1.\n");
 			epv = fminf(epv, gps.epv);
 
 			inertial_filter_correct(corr_gps[2][0], dt, z_est, 0, w_z_gps_p);
@@ -1041,6 +1236,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		}
 
 		if (use_vision_z) {
+			printf("[inav] Something wrong 8.\n");
 			epv = fminf(epv, epv_vision);
 			inertial_filter_correct(corr_vision[2][0], dt, z_est, 0, w_z_vision_p);
 		}
@@ -1057,6 +1253,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		}
 
 		if (can_estimate_xy) {
+			printf("[inav] Something wrong 9.\n");
 			/* inertial filter prediction for position */
 			inertial_filter_predict(dt, x_est, acc[0]);
 			inertial_filter_predict(dt, y_est, acc[1]);
@@ -1069,6 +1266,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 			/* inertial filter correction for position */
 			if (use_flow) {
+				printf("[inav] Something wrong 10.\n");
 				eph = fminf(eph, eph_flow);
 
 				inertial_filter_correct(corr_flow[0], dt, x_est, 1, params.w_xy_flow * w_flow);
@@ -1076,6 +1274,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			}
 
 			if (use_gps_xy) {
+				printf("[inav] Something wrong 11.\n");
 				eph = fminf(eph, gps.eph);
 
 				inertial_filter_correct(corr_gps[0][0], dt, x_est, 0, w_xy_gps_p);
@@ -1088,6 +1287,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			}
 
 			if (use_vision_xy) {
+				printf("[inav] Something wrong 12.\n");
 				eph = fminf(eph, eph_vision);
 
 				inertial_filter_correct(corr_vision[0][0], dt, x_est, 0, w_xy_vision_p);
@@ -1137,6 +1337,44 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			}
 		}
 
+
+
+
+
+
+		// temporary - prints
+		printf("%.2f , %.2f , %.2f , %.2f , %.2f , %.2f , %4.2f , %4.2f , %.1f , %b , %b , ",
+			   (double)verbose_signal1,
+			   (double)verbose_signal2,
+			   (double)verbose_signal3,
+			   (double)verbose_signal4,
+			   (double)verbose_signal5,
+			   (double)verbose_signal6,
+			   (double)verbose_signal7,
+			   (double)verbose_signal8,
+			   (double)verbose_signal9,
+			   verbose_signal10,
+			   verbose_signal11);
+		printf("%d , %d , %d , %d , %d , %.2f , %b , %f , %f , %f , %f , ",
+			   verbose_counter1, // same as 2,3,4,5,6,7
+			   verbose_counter8,
+			   verbose_counter9,
+			   verbose_counter10,
+			   verbose_counter11,
+			   (double)verbose_signal12,
+			   verbose_signal13,
+			   (double)verbose_signal14,
+			   (double)verbose_signal15,
+			   (double)verbose_signal16,
+			   (double)verbose_signal17);
+		printf("%b , %d , %d , %d\n",
+			   new_verbose_signal1,
+			   new_verbose_signal2,
+			   new_verbose_signal3,
+			   new_verbose_signal4);
+
+
+
 		if (t > pub_last + PUB_INTERVAL) {
 			pub_last = t;
 
@@ -1156,6 +1394,21 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				buf_ptr = 0;
 			}
 
+			// temporary - final z estimate
+			verbose_signal4=z_est[0];
+/*			printf("Going to print? %b ---\n",!already_printed_flag);
+			if(!already_printed_flag){
+				printf("will print now...");
+				printf("z estimate (z_est[0]): %5.3f\n", (double)z_est[0]);
+			}else{
+				already_printed_flag=false;
+			}
+*/
+			verbose_signal10=sonar_valid;
+			verbose_counter10++;
+			verbose_signal11=sonar_updated;
+			verbose_counter11++;
+
 			/* publish local position */
 			local_pos.xy_valid = can_estimate_xy;
 			local_pos.v_xy_valid = can_estimate_xy;
@@ -1173,8 +1426,10 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			local_pos.epv = epv;
 
 			if (local_pos.dist_bottom_valid) {
-				local_pos.dist_bottom = -z_est[0] - surface_offset;
-				local_pos.dist_bottom_rate = -z_est[1] - surface_offset_rate;
+//				local_pos.dist_bottom = -z_est[0] - surface_offset;
+//				local_pos.dist_bottom_rate = -z_est[1] - surface_offset_rate;
+				local_pos.dist_bottom = -z_est[0];
+				local_pos.dist_bottom_rate = -z_est[1];
 			}
 
 			local_pos.timestamp = t;
@@ -1209,22 +1464,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					orb_publish(ORB_ID(vehicle_global_position), vehicle_global_position_pub, &global_pos);
 				}
 			}
-			printf("%.3f   \t%.3f   \t%.3f   \t%.3f   \t%.3f   \t%.3f   \t%.3f   \t%.3f   \t%.3f   \t",
-				   (double)verbose_signal1,
-				   (double)verbose_signal2,
-				   (double)verbose_signal3,
-				   (double)verbose_signal4,
-				   (double)verbose_signal5,
-				   (double)verbose_signal6,
-				   (double)verbose_signal7,
-				   (double)verbose_signal8,
-				   (double)verbose_signal9,
-				   (double)z_est[0]);
-			printf("%5.0f   \t\t%5.0f   \n",
-				   (double)verbose_counter1,
-
-				   (double)verbose_counter9);
-
 		}
 	}
 
@@ -1233,3 +1472,17 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	thread_running = false;
 	return 0;
 }
+// TODO change all that is GPS to come from the sonar. (almost) done
+// TODO make sure that giving z_est[1] (velocity) from sonar measurements works
+// TODO make acceptable_change dependent on z_est[0] (not sure. initially, it was. now I will have to think about it later)
+
+// after getting to all the code errors:
+// TODO tune params.sonar_err and params.sonar_filt to be able to get through disturbances without any damage to the estimate.
+
+
+// don't forget later:
+// TODO take out the prints "Something wrong"
+// TODO remove dist_bottom if not needed
+// TODO remove buffer if not needed
+// TODO remove already_printed_flag
+// TODO remove z_est[0]=-0.7; initialization

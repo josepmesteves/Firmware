@@ -59,7 +59,7 @@ int px4_sensor_measurement_main(int argc, char *argv[])
 	int sensor_sonar_sub_fd = orb_subscribe(ORB_ID(sensor_range_finder));
 	
 	orb_set_interval(sensor_combined_sub_fd, 10);
-	orb_set_interval(sensor_sonar_sub_fd, 100);
+//	orb_set_interval(sensor_sonar_sub_fd, 100);
 	
 	/* one could wait for multiple topics with this technique, just using one here */
 	struct pollfd fds[] = {
@@ -109,15 +109,15 @@ int px4_sensor_measurement_main(int argc, char *argv[])
 				dt = sonar.timestamp - previous_time_stamp; // micro seconds
 				previous_time_stamp=sonar.timestamp;
 				frequency = 1E6/dt; // Hz
-				printf("distance= %2.3f \t time= %lld \t dt= %lld \t %8.3f\n", (double)sonar.distance, previous_time_stamp, dt, (double)frequency);
-			}
+//				printf("distance= %2.3f \t time= %lld \t dt= %lld \t %8.3f\n", (double)sonar.distance, previous_time_stamp, dt, (double)frequency);
+				printf("%5.3f \t %8.3f\n", (double)sonar.distance, (double)frequency);			}
 			if (fds[0].revents & POLLIN) {
 				
 				/* obtained data for the first file descriptor */
 				struct sensor_combined_s raw;
 				/* copy sensors raw data into local buffer */
 				orb_copy(ORB_ID(sensor_combined), sensor_combined_sub_fd, &raw);
-				printf("-----sensor: %f\n", (double)raw.magnetometer_raw[0]);
+				//printf("-----sensor: %f\n", (double)raw.magnetometer_raw[0]);
 			}
 
 		}
