@@ -50,7 +50,7 @@
  * @max 10.0
  * @group Position Estimator INAV
  */
-PARAM_DEFINE_FLOAT(INAV_W_Z_BARO, 0.5f);
+PARAM_DEFINE_FLOAT(INAV_W_Z_BARO, 0.3f);
 
 /**
  * Z axis weight for GPS
