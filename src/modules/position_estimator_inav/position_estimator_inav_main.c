@@ -83,7 +83,6 @@
 #define EST_BUF_SIZE 250000 / PUB_INTERVAL		// buffer size is 0.5s
 #define BARO_FILT_WIND_SIZE 35 // window size of the barometer moving average filter
 #define ACC_FILT_WIND_SIZE 20 // window size of the accelerometer moving average filter
-#define BLOCK_OF_ACC_AVG_SIZE 90 // size of the vector that contains averages of z acceleration measurements, to remove z acceleration bias
 
 static bool thread_should_exit = false; /**< Deamon exit flag */
 static bool thread_running = false; /**< Deamon status flag */
@@ -231,17 +230,14 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	float R_gps[3][3];					// rotation matrix for GPS correction moment
 	float baro_buf[BARO_FILT_WIND_SIZE];
 	float acc_buf[ACC_FILT_WIND_SIZE];
-	float acc_avg_buf[BLOCK_OF_ACC_AVG_SIZE];
 	memset(est_buf, 0, sizeof(est_buf));
 	memset(R_buf, 0, sizeof(R_buf));
 	memset(R_gps, 0, sizeof(R_gps));
 	memset(baro_buf, 0, sizeof(baro_buf));
 	memset(acc_buf, 0, sizeof(acc_buf));
-	memset(acc_avg_buf, 0, sizeof(acc_avg_buf));
 	int buf_ptr = 0;
 	int baro_ptr = 0;
 	int acc_ptr = 0;
-	int block_of_acc_avg_ptr = 0;
 
 //	static const float min_eph_epv = 2.0f;	// min EPH/EPV, used for weight calculation
 	static const float max_eph_epv = 20.0f;	// max EPH/EPV acceptable for estimation
@@ -328,7 +324,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 	bool baro_init = false;
 	bool acc_init = false;
-	bool store_acc_avg = false;
 	bool sonar_init = false;		// sonar time is initialized
 	bool gps_valid = false;			// GPS is valid
 	bool sonar_valid = false;		// sonar is valid
@@ -563,9 +558,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					if (acc_ptr >= ACC_FILT_WIND_SIZE-1) {
 						acc_ptr = 0;
 						acc_init = true;
-						
-						// completed a cicle, so I can store the average of this cicle
-						store_acc_avg = true;
 					} else {
 						acc_ptr++;
 					}
@@ -574,23 +566,11 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						for (int i=0 ; i<ACC_FILT_WIND_SIZE ; i++) {
 							acc[2] += acc_buf[i]/ACC_FILT_WIND_SIZE;
 						}
-						if (store_acc_avg){
-							acc_avg_buf[block_of_acc_avg_ptr] = acc[2];
-							block_of_acc_avg_ptr++;
-							if (block_of_acc_avg_ptr >= BLOCK_OF_ACC_AVG_SIZE - 1) {
-								float bias_correction=0;
-								// TODO do average of the whole block of averages, update bias
-								for (int i=0 ; i<BLOCK_OF_ACC_AVG_SIZE ; i++) {
-									bias_correction += acc_avg_buf[i]/BLOCK_OF_ACC_AVG_SIZE; // each acc_avg_buf entry is a mean itself, so there is an implicit term of *ACC_FILT_WIND_SIZE applied to each entry and a global /ACC_FILT_WIND_SIZE applied to new_bias, and these two cancel each other.
-								}
-								acc_bias[2] += bias_correction * 0.7f;
-								block_of_acc_avg_ptr = 0;
-							}
-							store_acc_avg = false;
-						}
 					} else {
 					// don't filter
 					}
+					
+					acc_bias[2] = acc_bias[2] + 0.0003f*acc[2]; // <=> bias + const * (acc[2] - 0)
 					
 					// temporary - filtered z acceleration
 					new_verbose_signal9 = acc[2];
