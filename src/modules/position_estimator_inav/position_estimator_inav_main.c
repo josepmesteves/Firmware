@@ -82,7 +82,6 @@
 #define PUB_INTERVAL 10000	// limit publish rate to 100 Hz
 #define EST_BUF_SIZE 250000 / PUB_INTERVAL		// buffer size is 0.5s
 #define BARO_FILT_WIND_SIZE 35 // window size of the barometer moving average filter
-#define ACC_FILT_WIND_SIZE 20 // window size of the accelerometer moving average filter
 
 static bool thread_should_exit = false; /**< Deamon exit flag */
 static bool thread_running = false; /**< Deamon status flag */
@@ -229,15 +228,12 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	float R_buf[EST_BUF_SIZE][3][3];	// rotation matrix buffer
 	float R_gps[3][3];					// rotation matrix for GPS correction moment
 	float baro_buf[BARO_FILT_WIND_SIZE];
-	float acc_buf[ACC_FILT_WIND_SIZE];
 	memset(est_buf, 0, sizeof(est_buf));
 	memset(R_buf, 0, sizeof(R_buf));
 	memset(R_gps, 0, sizeof(R_gps));
 	memset(baro_buf, 0, sizeof(baro_buf));
-	memset(acc_buf, 0, sizeof(acc_buf));
 	int buf_ptr = 0;
 	int baro_ptr = 0;
-	int acc_ptr = 0;
 
 //	static const float min_eph_epv = 2.0f;	// min EPH/EPV, used for weight calculation
 	static const float max_eph_epv = 20.0f;	// max EPH/EPV acceptable for estimation
@@ -255,6 +251,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	memset(y_est_prev, 0, sizeof(y_est_prev));
 	memset(z_est_prev, 0, sizeof(z_est_prev));
 
+//	int acc_ctr = 0;
 	int baro_init_cnt = 0;
 	int baro_init_num = 200;
 	float baro_offset = 0.0f;		// baro offset for reference altitude, initialized on start, then adjusted
@@ -316,6 +313,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	float sonar_new = 0.0f;
 
 	float baro_new = 0.0f;
+	
+	float last_filtered_acc = 0.0f;
 	
 	//hrt_abstime flow_prev = 0;			// time of last flow measurement
 	hrt_abstime sonar_time = 0;			// time of last sonar measurement (not filtered)
@@ -553,21 +552,19 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						memset(acc, 0, sizeof(acc));
 					}
 					
-					// Moving average filter with window of size 20
-					acc_buf[acc_ptr] = acc[2];
-					if (acc_ptr >= ACC_FILT_WIND_SIZE-1) {
-						acc_ptr = 0;
-						acc_init = true;
-					} else {
-						acc_ptr++;
-					}
 					if (acc_init) {
-						acc[2] = 0;
-						for (int i=0 ; i<ACC_FILT_WIND_SIZE ; i++) {
-							acc[2] += acc_buf[i]/ACC_FILT_WIND_SIZE;
-						}
+						acc[2] = last_filtered_acc + 0.062f * (acc[2] - last_filtered_acc);
+						last_filtered_acc = acc[2];
+						
 					} else {
-					// don't filter
+/*						acc_ctr++;
+						if (acc_ctr>10) {
+							last_filtered_acc=acc[2];
+							acc_init = true;
+						}
+*/
+						last_filtered_acc=acc[2];
+						acc_init = true;
 					}
 					
 					acc_bias[2] = acc_bias[2] + 0.0003f*acc[2]; // <=> bias + const * (acc[2] - 0)
