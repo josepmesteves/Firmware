@@ -40,7 +40,7 @@ SRCS		 	= position_estimator_inav_main.c \
 			position_estimator_inav_params.c \
 			inertial_filter.c
 
-MODULE_STACKSIZE = 4000
+MODULE_STACKSIZE = 4200
 
-EXTRACFLAGS = -Wframe-larger-than=4000
+EXTRACFLAGS = -Wframe-larger-than=4200
 

@@ -83,7 +83,7 @@
 #define EST_BUF_SIZE 250000 / PUB_INTERVAL		// buffer size is 0.5s
 #define BARO_FILT_WIND_SIZE 35 // window size of the barometer moving average filter
 #define ACC_FILT_WIND_SIZE 20 // window size of the accelerometer moving average filter
-
+#define BLOCK_OF_ACC_AVG_SIZE 90 // size of the vector that contains averages of z acceleration measurements, to remove z acceleration bias
 
 static bool thread_should_exit = false; /**< Deamon exit flag */
 static bool thread_running = false; /**< Deamon status flag */
@@ -231,23 +231,28 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	float R_gps[3][3];					// rotation matrix for GPS correction moment
 	float baro_buf[BARO_FILT_WIND_SIZE];
 	float acc_buf[ACC_FILT_WIND_SIZE];
+	float acc_avg_buf[BLOCK_OF_ACC_AVG_SIZE];
 	memset(est_buf, 0, sizeof(est_buf));
 	memset(R_buf, 0, sizeof(R_buf));
 	memset(R_gps, 0, sizeof(R_gps));
+	memset(baro_buf, 0, sizeof(baro_buf));
+	memset(acc_buf, 0, sizeof(acc_buf));
+	memset(acc_avg_buf, 0, sizeof(acc_avg_buf));
 	int buf_ptr = 0;
 	int baro_ptr = 0;
 	int acc_ptr = 0;
+	int block_of_acc_avg_ptr = 0;
 
-	static const float min_eph_epv = 2.0f;	// min EPH/EPV, used for weight calculation
+//	static const float min_eph_epv = 2.0f;	// min EPH/EPV, used for weight calculation
 	static const float max_eph_epv = 20.0f;	// max EPH/EPV acceptable for estimation
 
 	float eph = max_eph_epv;
-	float epv = 1.0f;
+//	float epv = 1.0f;
 
 	float eph_flow = 1.0f;
 
 	float eph_vision = 0.2f;
-	float epv_vision = 0.2f;
+//	float epv_vision = 0.2f;
 
 	float x_est_prev[2], y_est_prev[2], z_est_prev[2];
 	memset(x_est_prev, 0, sizeof(x_est_prev));
@@ -266,8 +271,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	hrt_abstime baro_timestamp = 0;
 
 	bool ref_inited = false;
-	hrt_abstime ref_init_start = 0;
-	const hrt_abstime ref_init_delay = 1000000;	// wait for 1s after 3D fix
+//	hrt_abstime ref_init_start = 0;
+//	const hrt_abstime ref_init_delay = 1000000;	// wait for 1s after 3D fix
 	struct map_projection_reference_s ref;
 	memset(&ref, 0, sizeof(ref));
 	hrt_abstime home_timestamp = 0;
@@ -296,7 +301,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		{ 0.0f, 0.0f },		// D (pos, vel)
 	};
 	float w_gps_xy = 1.0f;
-	float w_gps_z = 1.0f;
+//	float w_gps_z = 1.0f;
 
 	float corr_vision[3][2] = {
 		{ 0.0f, 0.0f },		// N (pos, vel)
@@ -323,6 +328,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 	bool baro_init = false;
 	bool acc_init = false;
+	bool store_acc_avg = false;
 	bool sonar_init = false;		// sonar time is initialized
 	bool gps_valid = false;			// GPS is valid
 	bool sonar_valid = false;		// sonar is valid
@@ -397,11 +403,11 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	float verbose_signal3=0;
 //	int verbose_counter3=0;
 	float verbose_signal4=0;
-	float verbose_signal5=0;
+//	float verbose_signal5=0;
 //	int verbose_counter5=0;
-	float verbose_signal6=0;
+//	float verbose_signal6=0;
 //	int verbose_counter6=0;
-	float verbose_signal7=0;
+//	float verbose_signal7=0;
 //	int verbose_counter7=0;
 	float verbose_signal8=0;
 //	int verbose_counter8=0;
@@ -427,6 +433,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	float new_verbose_signal7=0.0f;
 	float new_verbose_signal8=0.0f;
 	float new_verbose_signal9=0.0f;
+	float new_verbose_signal10=0.0f;
 
 
 	/* wait for initial baro value */
@@ -524,9 +531,9 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				orb_copy(ORB_ID(sensor_combined), sensor_combined_sub, &sensor);
 
 				if (sensor.accelerometer_timestamp != accel_timestamp) {
+					// temporary - acc_bias
+					new_verbose_signal10 = acc_bias[2];
 					if (att.R_valid) {
-						
-						
 						/* correct accel bias */
 						sensor.accelerometer_m_s2[0] -= acc_bias[0];
 						sensor.accelerometer_m_s2[1] -= acc_bias[1];
@@ -556,22 +563,37 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					if (acc_ptr >= ACC_FILT_WIND_SIZE-1) {
 						acc_ptr = 0;
 						acc_init = true;
+						
+						// completed a cicle, so I can store the average of this cicle
+						store_acc_avg = true;
 					} else {
 						acc_ptr++;
 					}
 					if (acc_init) {
 						acc[2] = 0;
-						for (int i=0; i<ACC_FILT_WIND_SIZE; i++) {
+						for (int i=0 ; i<ACC_FILT_WIND_SIZE ; i++) {
 							acc[2] += acc_buf[i]/ACC_FILT_WIND_SIZE;
+						}
+						if (store_acc_avg){
+							acc_avg_buf[block_of_acc_avg_ptr] = acc[2];
+							block_of_acc_avg_ptr++;
+							if (block_of_acc_avg_ptr >= BLOCK_OF_ACC_AVG_SIZE - 1) {
+								float bias_correction=0;
+								// TODO do average of the whole block of averages, update bias
+								for (int i=0 ; i<BLOCK_OF_ACC_AVG_SIZE ; i++) {
+									bias_correction += acc_avg_buf[i]/BLOCK_OF_ACC_AVG_SIZE; // each acc_avg_buf entry is a mean itself, so there is an implicit term of *ACC_FILT_WIND_SIZE applied to each entry and a global /ACC_FILT_WIND_SIZE applied to new_bias, and these two cancel each other.
+								}
+								acc_bias[2] += bias_correction * 0.7f;
+								block_of_acc_avg_ptr = 0;
+							}
+							store_acc_avg = false;
 						}
 					} else {
 					// don't filter
 					}
-
-
+					
 					// temporary - filtered z acceleration
 					new_verbose_signal9 = acc[2];
-
 
 
 					accel_timestamp = sensor.accelerometer_timestamp;
@@ -821,6 +843,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				baro_offset += ((baro_new - baro_offset) + sonar_new) * 0.5f; // update baro_offset in a way that the measurement of the baro is closer to the measurement of the sonar (true altitude value)
 
 				z_est[0] = - sonar_new; // set ground truth. equivalent to line 653
+				corr_sonar = 0.0f;
 
 				// temporary
 /*				printf("------------------------------->Ground truth: %5.3f\n", (double)z_est[0]);
@@ -946,16 +969,17 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				}
 			}
 
-			/* vehicle GPS position */
-			orb_check(vehicle_gps_position_sub, &updated);
 
+			// vehicle GPS position
+			orb_check(vehicle_gps_position_sub, &updated);
+/*
 			if (updated) {
 				printf("[inav] Something wrong 3.\n");
 				orb_copy(ORB_ID(vehicle_gps_position), vehicle_gps_position_sub, &gps);
 
 				bool reset_est = false;
 
-				/* hysteresis for GPS quality */
+				// hysteresis for GPS quality
 				if (gps_valid) {
 					if (gps.eph > max_eph_epv || gps.epv > max_eph_epv || gps.fix_type < 3) {
 						gps_valid = false;
@@ -975,7 +999,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					double lon = gps.lon * 1e-7;
 					float alt = gps.alt * 1e-3;
 
-					/* initialize reference position if needed */
+					// initialize reference position if needed
 					if (!ref_inited) {
 						if (ref_init_start == 0) {
 							ref_init_start = t;
@@ -983,7 +1007,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						} else if (t > ref_init_start + ref_init_delay) {
 							ref_inited = true;
 
-							/* set position estimate to (0, 0, 0), use GPS velocity for XY */
+							// set position estimate to (0, 0, 0), use GPS velocity for XY
 							x_est[0] = 0.0f;
 							x_est[1] = gps.vel_n_m_s;
 							y_est[0] = 0.0f;
@@ -994,7 +1018,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 							local_pos.ref_alt = alt + z_est[0];
 							local_pos.ref_timestamp = t;
 
-							/* initialize projection */
+							// initialize projection
 							map_projection_init(&ref, lat, lon);
 							// XXX replace this print
 							warnx("init ref: lat=%.7f, lon=%.7f, alt=%8.4f", (double)lat, (double)lon, (double)alt);
@@ -1003,11 +1027,11 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					}
 
 					if (ref_inited) {
-						/* project GPS lat lon to plane */
+						// project GPS lat lon to plane
 						float gps_proj[2];
 						map_projection_project(&ref, lat, lon, &(gps_proj[0]), &(gps_proj[1]));
 
-						/* reset position estimate when GPS becomes good */
+						// reset position estimate when GPS becomes good
 						if (reset_est) {
 							x_est[0] = gps_proj[0];
 							x_est[1] = gps.vel_n_m_s;
@@ -1015,18 +1039,18 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 							y_est[1] = gps.vel_e_m_s;
 						}
 
-						/* calculate index of estimated values in buffer */
+						// calculate index of estimated values in buffer
 						int est_i = buf_ptr - 1 - min(EST_BUF_SIZE - 1, max(0, (int)(params.delay_gps * 1000000.0f / PUB_INTERVAL)));
 						if (est_i < 0) {
 							est_i += EST_BUF_SIZE;
 						}
 
-						/* calculate correction for position */
+						// calculate correction for position
 						corr_gps[0][0] = gps_proj[0] - est_buf[est_i][0][0];
 						corr_gps[1][0] = gps_proj[1] - est_buf[est_i][1][0];
 						corr_gps[2][0] = local_pos.ref_alt - alt - est_buf[est_i][2][0];
 
-						/* calculate correction for velocity */
+						// calculate correction for velocity
 						if (gps.vel_ned_valid) {
 							corr_gps[0][1] = gps.vel_n_m_s - est_buf[est_i][0][1];
 							corr_gps[1][1] = gps.vel_e_m_s - est_buf[est_i][1][1];
@@ -1038,7 +1062,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 							corr_gps[2][1] = 0.0f;
 						}
 
-						/* save rotation matrix at this moment */
+						// save rotation matrix at this moment
 						memcpy(R_gps, R_buf[est_i], sizeof(R_gps));
 
 						w_gps_xy = min_eph_epv / fmaxf(min_eph_epv, gps.eph);
@@ -1046,13 +1070,14 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					}
 
 				} else {
-					/* no GPS lock */
+					// no GPS lock
 					memset(corr_gps, 0, sizeof(corr_gps));
 					ref_init_start = 0;
 				}
 
 				gps_updates++;
 			}
+*/
 		}
 
 		/* check for timeout on FLOW topic */
@@ -1102,16 +1127,16 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		if (eph < max_eph_epv) {
 			eph *= 1.0f + dt;
 		}
-		if (epv < max_eph_epv) {
+/*		if (epv < max_eph_epv) {
 			epv += 0.005f * dt;	// add 1m to EPV each 200s (baro drift)
 		}
-
+*/
 		/* use GPS if it's valid and reference position initialized */
 		bool use_gps_xy = ref_inited && gps_valid && params.w_xy_gps_p > MIN_VALID_W;
 		bool use_gps_z = ref_inited && gps_valid && params.w_z_gps_p > MIN_VALID_W;
 		/* use VISION if it's valid and has a valid weight parameter */
 		bool use_vision_xy = vision_valid && params.w_xy_vision_p > MIN_VALID_W;
-		bool use_vision_z = vision_valid && params.w_z_vision_p > MIN_VALID_W;
+//		bool use_vision_z = vision_valid && params.w_z_vision_p > MIN_VALID_W;
 		/* use flow if it's valid and (accurate or no GPS available) */
 		bool use_flow = flow_valid && (flow_accurate || !use_gps_xy);
 
@@ -1134,12 +1159,12 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 		float w_xy_gps_p = params.w_xy_gps_p * w_gps_xy;
 		float w_xy_gps_v = params.w_xy_gps_v * w_gps_xy;
-		float w_z_gps_p = params.w_z_gps_p * w_gps_z;
-		float w_z_gps_v = params.w_z_gps_v * w_gps_z;
+//		float w_z_gps_p = params.w_z_gps_p * w_gps_z;
+//		float w_z_gps_v = params.w_z_gps_v * w_gps_z;
 
 		float w_xy_vision_p = params.w_xy_vision_p;
 		float w_xy_vision_v = params.w_xy_vision_v;
-		float w_z_vision_p = params.w_z_vision_p;
+//		float w_z_vision_p = params.w_z_vision_p;
 
 		/* reduce GPS weight if optical flow is good */
 		if (use_flow && flow_accurate) {
@@ -1150,18 +1175,18 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 		// DONE implement baro offset correction with sonar. Line 611. Now I don't need to compensate with offs_corr because I am giving the true value for baro_offset and to corr_baro
 		/* baro offset correction */
-		if (use_gps_z) {
+/*		if (use_gps_z) {
 			printf("[inav] Something wrong 4.\n");
-/*			float offs_corr = corr_gps[2][0] * w_z_gps_p * dt;
+			float offs_corr = corr_gps[2][0] * w_z_gps_p * dt;
 			baro_offset += offs_corr;
 			corr_baro += offs_corr;
-*/		}
-
+		}
+*/
 
 		/* accelerometer bias correction for GPS (use buffered rotation matrix) */
-		float accel_bias_corr[3] = { 0.0f, 0.0f, 0.0f };
+//		float accel_bias_corr[3] = { 0.0f, 0.0f, 0.0f };
 
-		if (use_gps_xy) {
+/*		if (use_gps_xy) {
 			printf("[inav] Something wrong 4 1.\n");
 			accel_bias_corr[0] -= corr_gps[0][0] * w_xy_gps_p * w_xy_gps_p;
 			accel_bias_corr[0] -= corr_gps[0][1] * w_xy_gps_v;
@@ -1175,7 +1200,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			accel_bias_corr[2] -= corr_gps[2][1] * w_z_gps_v;
 		}
 
-		/* (gps) transform error vector from NED frame to body frame */
+		// (gps) transform error vector from NED frame to body frame
 		for (int i = 0; i < 3; i++) {
 			float c = 0.0f;
 
@@ -1187,8 +1212,9 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				acc_bias[i] += c * params.w_acc_bias * dt;
 			}
 		}
-
-		/* accelerometer bias correction for VISION (use buffered rotation matrix) */
+*/
+/*
+		// accelerometer bias correction for VISION (use buffered rotation matrix)
 		accel_bias_corr[0] = 0.0f;
 		accel_bias_corr[1] = 0.0f;
 		accel_bias_corr[2] = 0.0f;
@@ -1206,7 +1232,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			accel_bias_corr[2] -= corr_vision[2][0] * w_z_vision_p * w_z_vision_p;
 		}
 
-		/* (vision) transform error vector from NED frame to body frame */
+		// (vision) transform error vector from NED frame to body frame
 		for (int i = 0; i < 3; i++) {
 			float c = 0.0f;
 
@@ -1218,8 +1244,9 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				acc_bias[i] += c * params.w_acc_bias * dt;
 			}
 		}
-
-		/* accelerometer bias correction for flow and baro (assume that there is no delay) */
+*/
+/*
+		// accelerometer bias correction for flow and baro (assume that there is no delay)
 		accel_bias_corr[0] = 0.0f;
 		accel_bias_corr[1] = 0.0f;
 		accel_bias_corr[2] = 0.0f;
@@ -1229,32 +1256,24 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			accel_bias_corr[0] -= corr_flow[0] * params.w_xy_flow;
 			accel_bias_corr[1] -= corr_flow[1] * params.w_xy_flow;
 		}
-		
-		if (sonar_valid) {
+*/
+		// Previous approach to acceleration bias correction
+/*		if (sonar_valid) {
 			// if sonar is valid twice in a row
-
-			// if z_est is corrected directly with sonar, then corr_sonar will be 0 here
-			// warn: tune weights. is it with a minus sign?
-			// warn: maybe use previous measurement of position to calculate and correct velocity (this is not important here)
-			
-			
-			
-			accel_bias_corr[2] -= corr_sonar * 0.14f * 0.14f; // TODO change acc_bias implementation
-			corr_sonar = 0.0f;
+			//accel_bias_corr[2] -= corr_sonar * 0.14f * 0.14f; // This acc_bias implementation does not work
 		}
-
-		accel_bias_corr[2] -= corr_baro * params.w_z_baro * params.w_z_baro;
-
+		//accel_bias_corr[2] -= corr_baro * params.w_z_baro * params.w_z_baro;
+*/
 
 		// temporary - acceleration correction after baro corr , baro correction on acceleration
-		verbose_signal7=accel_bias_corr[2];
+//		verbose_signal7=accel_bias_corr[2];
 //		verbose_counter7++;
-		verbose_signal6=corr_baro * params.w_z_baro * params.w_z_baro * params.w_z_baro*60;
+//		verbose_signal6=corr_baro * params.w_z_baro * params.w_z_baro * params.w_z_baro;
 //		verbose_counter6++;
 
 
-
-		/* transform error vector from NED frame to body frame */
+/*
+		// transform error vector from NED frame to body frame
 		for (int i = 0; i < 3; i++) {
 			float c = 0.0f;
 
@@ -1266,9 +1285,10 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				acc_bias[i] += c * params.w_acc_bias * dt;
 			}
 		}
+*/
 
 		// temporary - total acc bias , z before prediction
-		verbose_signal5=acc_bias[2];
+//		verbose_signal5=acc_bias[2];
 //		verbose_counter5++;
 		verbose_signal1=z_est[0];
 		verbose_counter1++;
@@ -1303,20 +1323,20 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			inertial_filter_correct(corr_sonar, dt, z_est, 0, sonar_weight);
 		 }
 
-		if (use_gps_z) {
+/*		if (use_gps_z) {
 			printf("[inav] Something wrong 7 2.\n");
 			epv = fminf(epv, gps.epv);
 
 			inertial_filter_correct(corr_gps[2][0], dt, z_est, 0, w_z_gps_p);
 			inertial_filter_correct(corr_gps[2][1], dt, z_est, 1, w_z_gps_v);
 		}
-
-		if (use_vision_z) {
+*/
+/*		if (use_vision_z) {
 			printf("[inav] Something wrong 8.\n");
 			epv = fminf(epv, epv_vision);
 			inertial_filter_correct(corr_vision[2][0], dt, z_est, 0, w_z_vision_p);
 		}
-
+*/
 		if (!(isfinite(z_est[0]) && isfinite(z_est[1]))) {
 			write_debug_log("BAD ESTIMATE AFTER Z CORRECTION", dt, x_est, y_est, z_est, x_est_prev, y_est_prev, z_est_prev, acc, corr_gps, w_xy_gps_p, w_xy_gps_v);
 			memcpy(z_est, z_est_prev, sizeof(z_est));
@@ -1349,7 +1369,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				inertial_filter_correct(corr_flow[1], dt, y_est, 1, params.w_xy_flow * w_flow);
 			}
 
-			if (use_gps_xy) {
+/*			if (use_gps_xy) {
 				printf("[inav] Something wrong 11.\n");
 				eph = fminf(eph, gps.eph);
 
@@ -1361,7 +1381,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					inertial_filter_correct(corr_gps[1][1], dt, y_est, 1, w_xy_gps_v);
 				}
 			}
-
+*/
 			if (use_vision_xy) {
 				printf("[inav] Something wrong 12.\n");
 				eph = fminf(eph, eph_vision);
@@ -1419,19 +1439,19 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 
 		// temporary - prints
-		printf("%.4f , %.4f , %.4f , %.4f , %.4f , %.4f , %4.4f , %4.4f , %.4f , %b , %b , ",
+		printf("%.4f , %.4f , %.4f , %.4f , 0 , 0 , 0 , %4.4f , %.4f , %b , %b , ",
 			   (double)verbose_signal1,
 			   (double)verbose_signal2,
 			   (double)verbose_signal3,
 			   (double)verbose_signal4,
-			   (double)verbose_signal5,
-			   (double)verbose_signal6,
-			   (double)verbose_signal7,
+			   //(double)verbose_signal5,
+			   //(double)verbose_signal6,
+			   //(double)verbose_signal7,
 			   (double)verbose_signal8,
 			   (double)verbose_signal9,
 			   verbose_signal10,
 			   verbose_signal11);
-		printf("0 , 0 , 0 , 0 , 0 , %.2f , 0 , 0 , 0 , 0 , %.4f , ",
+		printf("0 , 0 , 0 , 0 , 0 , %.3f , 0 , 0 , 0 , 0 , %.4f , ",
 /*			   verbose_counter1, // same as 2,3,4,5,6,7
 			   verbose_counter8,
 			   verbose_counter9,
@@ -1449,12 +1469,13 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 //			   new_verbose_signal3,
 //			   new_verbose_signal4,
 
-		printf("%.4f , %.4f , %.4f , %.4f , %.4f \n",
+		printf("%.4f , %.4f , %.4f , %.4f , %.4f , %.4f \n",
 			   (double)new_verbose_signal5,
 			   (double)new_verbose_signal6,
 			   (double)new_verbose_signal7,
 			   (double)new_verbose_signal8,
-			   (double)new_verbose_signal9);
+			   (double)new_verbose_signal9,
+			   (double)new_verbose_signal10);
 
 
 
@@ -1479,14 +1500,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 			// temporary - final z estimate
 			verbose_signal4=z_est[0];
-/*			printf("Going to print? %b ---\n",!already_printed_flag);
-			if(!already_printed_flag){
-				printf("will print now...");
-				printf("z estimate (z_est[0]): %5.3f\n", (double)z_est[0]);
-			}else{
-				already_printed_flag=false;
-			}
-*/
 			verbose_signal10=sonar_valid;
 			//verbose_counter10++;
 			verbose_signal11=sonar_updated;
@@ -1506,7 +1519,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			local_pos.yaw = att.yaw;
 			local_pos.dist_bottom_valid = dist_bottom_valid;
 			local_pos.eph = eph;
-			local_pos.epv = epv;
+//			local_pos.epv = epv;
 
 			if (local_pos.dist_bottom_valid) {
 //				local_pos.dist_bottom = -z_est[0] - surface_offset;
@@ -1538,7 +1551,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				global_pos.yaw = local_pos.yaw;
 
 				global_pos.eph = eph;
-				global_pos.epv = epv;
+//				global_pos.epv = epv;
 
 				if (vehicle_global_position_pub < 0) {
 					vehicle_global_position_pub = orb_advertise(ORB_ID(vehicle_global_position), &global_pos);
@@ -1561,6 +1574,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 // after getting to all the code errors:
 // TODO tune params.sonar_err and params.sonar_filt to be able to get through disturbances without any damage to the estimate.
+
+// TODO optimize filters
 
 
 // don't forget later:
