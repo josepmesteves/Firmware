@@ -81,7 +81,6 @@
 #define MIN_VALID_W 0.00001f
 #define PUB_INTERVAL 10000	// limit publish rate to 100 Hz
 #define EST_BUF_SIZE 250000 / PUB_INTERVAL		// buffer size is 0.5s
-#define BARO_FILT_WIND_SIZE 35 // window size of the barometer moving average filter
 
 static bool thread_should_exit = false; /**< Deamon exit flag */
 static bool thread_running = false; /**< Deamon status flag */
@@ -227,13 +226,10 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	float est_buf[EST_BUF_SIZE][3][2];	// estimated position buffer
 	float R_buf[EST_BUF_SIZE][3][3];	// rotation matrix buffer
 	float R_gps[3][3];					// rotation matrix for GPS correction moment
-	float baro_buf[BARO_FILT_WIND_SIZE];
 	memset(est_buf, 0, sizeof(est_buf));
 	memset(R_buf, 0, sizeof(R_buf));
 	memset(R_gps, 0, sizeof(R_gps));
-	memset(baro_buf, 0, sizeof(baro_buf));
 	int buf_ptr = 0;
-	int baro_ptr = 0;
 
 //	static const float min_eph_epv = 2.0f;	// min EPH/EPV, used for weight calculation
 	static const float max_eph_epv = 20.0f;	// max EPH/EPV acceptable for estimation
@@ -321,7 +317,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	hrt_abstime sonar_time_prev = 0;	// time of previous sonar measurement (not filtered)
 	hrt_abstime sonar_valid_time = 0;	// time of last sonar measurement used for correction (filtered)
 
-	bool baro_init = false;
 	bool acc_init = false;
 	bool sonar_init = false;		// sonar time is initialized
 	bool gps_valid = false;			// GPS is valid
@@ -557,12 +552,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						last_filtered_acc = acc[2];
 						
 					} else {
-/*						acc_ctr++;
-						if (acc_ctr>10) {
-							last_filtered_acc=acc[2];
-							acc_init = true;
-						}
-*/
 						last_filtered_acc=acc[2];
 						acc_init = true;
 					}
@@ -581,25 +570,11 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					// warn: might be a good idea to take the sonar component from the corr_baro. But I am not confident about it, so I won't do it now
 					// not good, but possible: corr_baro = baro_offset - sensor.baro_alt_meter - z_est[0];
 
-					// Moving average filter with window of size 20
-					baro_buf[baro_ptr] = sensor.baro_alt_meter;
-					if(baro_ptr >= BARO_FILT_WIND_SIZE-1){
-						baro_ptr = 0;
-						baro_init = true;
-					}else{
-						baro_ptr++;
-					}
-					if (baro_init) {
-						baro_new = 0;
-						for (int i=0; i<BARO_FILT_WIND_SIZE; i++) {
-							baro_new += baro_buf[i]/BARO_FILT_WIND_SIZE;
-						}
-					}else{
-					// use unfiltered baro measurement if not initialised yet
-						baro_new = sensor.baro_alt_meter;
-					}
+					
+					baro_new = baro_new + 0.032f * (sensor.baro_alt_meter - baro_new); // (1-0.032)/0.032 = 30 samples to settle (around 0.3 seconds at 100Hz)
+					
 
-					// TODO DECIDE which of the two to keep!
+					// TODO DECIDE which of the two to keep! baro_new - baro_offset da o negativo da altitude
 					corr_baro = baro_new - baro_offset - z_est[0]; // estou 50% seguro. estou a basear o sinal no que deve estar no inertial filter correction
 					//corr_baro = baro_offset - baro_new + z_est[0]; // closest to original
 					// OR
