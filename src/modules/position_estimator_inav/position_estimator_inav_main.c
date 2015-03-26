@@ -278,7 +278,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	hrt_abstime t_prev = 0;
 	
 	// TODO tune weight
-	int sonar_weight = 0.5;
+//	int sonar_weight = 0.5;
 
 	/* store error when sensor updates, but correct on each time step to avoid jumps in estimated value */
 	float acc[] = { 0.0f, 0.0f, 0.0f };	// N E D
@@ -358,8 +358,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	int sensor_combined_sub = orb_subscribe(ORB_ID(sensor_combined));
 	int vehicle_attitude_sub = orb_subscribe(ORB_ID(vehicle_attitude));
 	int optical_flow_sub = orb_subscribe(ORB_ID(optical_flow));
-	int vehicle_gps_position_sub = orb_subscribe(ORB_ID(vehicle_gps_position));
-	int vision_position_estimate_sub = orb_subscribe(ORB_ID(vision_position_estimate));
+//	int vehicle_gps_position_sub = orb_subscribe(ORB_ID(vehicle_gps_position));
+//	int vision_position_estimate_sub = orb_subscribe(ORB_ID(vision_position_estimate));
 	int home_position_sub = orb_subscribe(ORB_ID(home_position));
 	int sensor_sonar_sub_fd = orb_subscribe(ORB_ID(sensor_range_finder));
 
@@ -386,45 +386,23 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	// temporary
 //	bool already_printed_flag=false;
 	float verbose_signal1=0;
-	int verbose_counter1=0;
 	float verbose_signal2=0;
-	int verbose_counter2=0;
-	float verbose_signal3=0;
-//	int verbose_counter3=0;
-	float verbose_signal4=0;
-//	float verbose_signal5=0;
-//	int verbose_counter5=0;
-//	float verbose_signal6=0;
-//	int verbose_counter6=0;
-//	float verbose_signal7=0;
-//	int verbose_counter7=0;
-	float verbose_signal8=0;
-//	int verbose_counter8=0;
-	float verbose_signal9=0;
-//	int verbose_counter9=0;
-	bool verbose_signal10=0;
-//	int verbose_counter10=0;
-	bool verbose_signal11=0;
-//	int verbose_counter11=0;
-	float verbose_signal12=0.0f;
-//	bool verbose_signal13=false;
-//	float verbose_signal14=0.0f;
-//	float verbose_signal15=0.0f;
-//	float verbose_signal16=0.0f;
-	float verbose_signal17=0.0f;
+	float verbose_signal7=0;
+	float verbose_signal3=0.0f;
 
 	bool new_verbose_signal1=false;
-//	int new_verbose_signal2=0;
-//	int new_verbose_signal3=0;
-//	int new_verbose_signal4=0;
 	float new_verbose_signal5=0.0f;
 	float new_verbose_signal6=0.0f;
-	float new_verbose_signal7=0.0f;
-	float new_verbose_signal8=0.0f;
-	float new_verbose_signal9=0.0f;
+	float new_verbose_signal3=0.0f;
+	float new_verbose_signal4=0.0f;
 	float new_verbose_signal10=0.0f;
+	float new_verbose_signal11=0.0f;
+	float new_verbose_signal12=0.0f;
 
 
+	int sonar_valid_test_ctr = 0;
+	
+	
 	/* wait for initial baro value */
 	bool wait_baro = true;
 
@@ -513,6 +491,11 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				orb_copy(ORB_ID(actuator_armed), armed_sub, &armed);
 			}
 
+			// temporary - starting z estimate of the iteration
+			verbose_signal1=z_est[0];
+
+			
+			
 			/* sensor combined */
 			orb_check(sensor_combined_sub, &updated);
 
@@ -523,14 +506,12 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					// temporary - acc_bias
 					new_verbose_signal10 = acc_bias[2];
 					if (att.R_valid) {
+						
+						new_verbose_signal11 = sensor.accelerometer_m_s2[2];
 						/* correct accel bias */
 						sensor.accelerometer_m_s2[0] -= acc_bias[0];
 						sensor.accelerometer_m_s2[1] -= acc_bias[1];
 						sensor.accelerometer_m_s2[2] -= acc_bias[2];
-
-						// temporary
-						verbose_signal9=sensor.accelerometer_m_s2[2];
-						//verbose_counter9++;
 
 						/* transform acceleration vector from body frame to NED frame */
 						for (int i = 0; i < 3; i++) {
@@ -542,6 +523,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						}
 
 						acc[2] += CONSTANTS_ONE_G;
+						
+						new_verbose_signal12 = acc[2];
 
 					} else {
 						memset(acc, 0, sizeof(acc));
@@ -559,7 +542,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					acc_bias[2] = acc_bias[2] + 0.0003f*acc[2]; // <=> bias + const * (acc[2] - 0)
 					
 					// temporary - filtered z acceleration
-					new_verbose_signal9 = acc[2];
+					new_verbose_signal4 = acc[2];
 
 
 					accel_timestamp = sensor.accelerometer_timestamp;
@@ -583,12 +566,10 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					baro_updates++;
 
 					// temporary - baro offset
-					verbose_signal8=baro_offset;
-//					verbose_counter8++;
+					verbose_signal7=baro_offset;
 					new_verbose_signal5 = sensor.baro_alt_meter;
 					new_verbose_signal6 = corr_baro;
-					new_verbose_signal7 = z_est[0];
-					new_verbose_signal8 = baro_new;
+					new_verbose_signal3 = baro_new;
 				}
 			}
 			
@@ -597,10 +578,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			orb_check(sensor_sonar_sub_fd, &updated);
 
 			if (updated) {
-				
-				//temporary - new sonar measurement - if 1
-				//verbose_signal13=true;
-
 
 				sonar_updated = true;
 				orb_copy(ORB_ID(sensor_range_finder), sensor_sonar_sub_fd, &sonar);
@@ -610,16 +587,11 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 //				flow_prev = flow.flow_timestamp;
 
 				// temporary - measured sonar distance
-				verbose_signal12=sonar.distance;
-//				verbose_signal14=PX4_R(att.R, 2, 2);
-//				verbose_signal15=fabsf(sonar.distance - sonar_new);
+				verbose_signal3=sonar.distance;
 
 				if ((sonar.distance > 0.2f) &&
 					(sonar.distance < 7.6f) &&
 					(PX4_R(att.R, 2, 2) > 0.7f)) { // TODO understand this, otherwise change it
-
-					// temporary - if 2
-//					new_verbose_signal4 = 1;
 
 					if (sonar_init){
 						sonar_time_prev = sonar_time;
@@ -639,20 +611,12 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					acceptable_change += (sonar_new - sonar_last_valid) * params.sonar_filt; // changed sonar_filt from .05 to .1
 // sonar_last_valid maintains the same value (last valid measurement) if the current measurement is not considered to be valid
 
-					// temporary - corr_sonar_filtered
-//					verbose_signal16=corr_sonar_filtered;
-					verbose_signal17=corr_sonar;
-
 					if (fabsf(corr_sonar) > params.sonar_err) { // changed sonar_err from .3 to .2
-						// temporary - if 3
-//						new_verbose_signal2 = 1;
 
 						/* correction of altitude is too large: spike or new ground level? */
 //						if (fabsf(corr_sonar - corr_sonar_filtered) > params.sonar_err) {
 						if (fabsf(sonar_new - ( sonar_last_valid + acceptable_change)) > params.sonar_err) { // the idea is that if it is a new altitude, then the (acceptable_change +  last_valid_measurement)  will eventually catch up with the measurement of the sonar, so it is not a spike.
 							/* spike detected, ignore */
-
-							//new_verbose_signal3 = 1;
 
 							corr_sonar = 0.0f; // do not correct
 							sonar_new = sonar_last_valid; // maintain last sonar measurement
@@ -660,16 +624,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						} else {
 							/* new ground level */
 							
-							// temporary - if 4
-//							new_verbose_signal3 = 0;
-
-
-							/*
-							surface_offset -= corr_sonar;
-							surface_offset_rate = 0.0f;
-							corr_sonar = 0.0f;
-							corr_sonar_filtered = 0.0f;
-							*/
 							acceptable_change = 0.0f;
 							sonar_valid_time = t;
 							if(sonar_valid){
@@ -688,9 +642,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						}
 
 					} else {
-						// temporary
-//						new_verbose_signal2 = 0;
-//						new_verbose_signal3 = -1;
 
 						/* correction is ok, use it */
 						sonar_valid_time = t;
@@ -704,17 +655,15 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						acceptable_change = 0.0f;
 					}
 				}
-				
-				// temporary
-//				else{new_verbose_signal4 = 0;}
 			}
 			
-			//temporary - new sonar measurement
-			else{
-				//verbose_signal13=false;
-				//new_verbose_signal2 = -1;
-				//new_verbose_signal3 = -1;
-				//new_verbose_signal4 = -1;
+			if (sonar_valid_test_ctr<6600) {
+				sonar_valid_test_ctr++;
+				if (sonar_valid_test_ctr>=3300) {
+					sonar_valid = false;
+				}
+			} else {
+				sonar_valid_test_ctr = 0;
 			}
 			new_verbose_signal1 = sonar_valid;
 
@@ -797,10 +746,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				z_est[0] = - sonar_new; // set ground truth. equivalent to line 653
 				corr_sonar = 0.0f;
 
-				// temporary
-/*				printf("------------------------------->Ground truth: %5.3f\n", (double)z_est[0]);
-				already_printed_flag=true;
-*/
 				// TODO only take the false out when I create a flag for valid velocity, which is true when I have 2 consecutive good measurements (2 consecutive sonar_valid)
 				if (sonar_init && sonar_vel_valid) { // if (sonar_init)
 					z_est[1] = (z_est[0] - sonar_last_valid) / (sonar_time - sonar_time_prev); // warn maybe I should use previous z_est instead of the previous sonar measurement
@@ -851,10 +796,10 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				}
 			}
 
-
-			/* check no vision circuit breaker is set */
+/*
+			// check no vision circuit breaker is set
 			if (params.no_vision != CBRK_NO_VISION_KEY) {
-				/* vehicle vision position */
+				// vehicle vision position
 				orb_check(vision_position_estimate_sub, &updated);
 
 				if (updated) {
@@ -865,13 +810,13 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					static float last_vision_y = 0.0f;
 					static float last_vision_z = 0.0f;
 
-					/* reset position estimate on first vision update */
+					// reset position estimate on first vision update
 					if (!vision_valid) {
 						x_est[0] = vision.x;
 						x_est[1] = vision.vx;
 						y_est[0] = vision.y;
 						y_est[1] = vision.vy;
-						/* only reset the z estimate if the z weight parameter is not zero */
+						// only reset the z estimate if the z weight parameter is not zero
 						if (params.w_z_vision_p > MIN_VALID_W)
 						{
 							z_est[0] = vision.z;
@@ -888,7 +833,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						mavlink_log_info(mavlink_fd, "[inav] VISION estimate valid");
 					}
 
-					/* calculate correction for position */
+					// calculate correction for position
 					corr_vision[0][0] = vision.x - x_est[0];
 					corr_vision[1][0] = vision.y - y_est[0];
 					corr_vision[2][0] = vision.z - z_est[0];
@@ -907,12 +852,12 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						last_vision_y = vision.y;
 						last_vision_z = vision.z;
 
-						/* calculate correction for velocity */
+						// calculate correction for velocity
 						corr_vision[0][1] = vision.vx - x_est[1];
 						corr_vision[1][1] = vision.vy - y_est[1];
 						corr_vision[2][1] = vision.vz - z_est[1];
 					} else {
-						/* assume zero motion */
+						// assume zero motion
 						corr_vision[0][1] = 0.0f - x_est[1];
 						corr_vision[1][1] = 0.0f - y_est[1];
 						corr_vision[2][1] = 0.0f - z_est[1];
@@ -920,11 +865,12 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 				}
 			}
+*/
 
-
+/*
 			// vehicle GPS position
 			orb_check(vehicle_gps_position_sub, &updated);
-/*
+
 			if (updated) {
 				printf("[inav] Something wrong 3.\n");
 				orb_copy(ORB_ID(vehicle_gps_position), vehicle_gps_position_sub, &gps);
@@ -1047,19 +993,26 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			mavlink_log_info(mavlink_fd, "[inav] SONAR timeout");
 		}
 
-		/* check for timeout on GPS topic */
+/*
+		// check for timeout on GPS topic
 		if (gps_valid && (t > (gps.timestamp_position + gps_topic_timeout))) {
 			gps_valid = false;
 			warnx("GPS timeout");
 			mavlink_log_info(mavlink_fd, "[inav] GPS timeout");
 		}
 
-		/* check for timeout on vision topic */
+		// check for timeout on vision topic
 		if (vision_valid && (t > (vision.timestamp_boot + vision_topic_timeout))) {
 			vision_valid = false;
 			warnx("VISION timeout");
 			mavlink_log_info(mavlink_fd, "[inav] VISION timeout");
 		}
+*/
+
+
+
+
+
 
 		// TODO uncomment this
 		/* sonar measurements not valid for a short period */
@@ -1217,11 +1170,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		//accel_bias_corr[2] -= corr_baro * params.w_z_baro * params.w_z_baro;
 */
 
-		// temporary - acceleration correction after baro corr , baro correction on acceleration
-//		verbose_signal7=accel_bias_corr[2];
-//		verbose_counter7++;
-//		verbose_signal6=corr_baro * params.w_z_baro * params.w_z_baro * params.w_z_baro;
-//		verbose_counter6++;
 
 
 /*
@@ -1239,19 +1187,10 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		}
 */
 
-		// temporary - total acc bias , z before prediction
-//		verbose_signal5=acc_bias[2];
-//		verbose_counter5++;
-		verbose_signal1=z_est[0];
-		verbose_counter1++;
 
 		/* inertial filter prediction for altitude, based on last iteration's velocity estimation and corrected acceleration */
 		
 		inertial_filter_predict(dt, z_est, acc[2]);
-
-		// temporary - z after prediction
-		verbose_signal2=z_est[0];
-		verbose_counter2++;
 
 		if (!(isfinite(z_est[0]) && isfinite(z_est[1]))) {
 			write_debug_log("BAD ESTIMATE AFTER Z PREDICTION", dt, x_est, y_est, z_est, x_est_prev, y_est_prev, z_est_prev, acc, corr_gps, w_xy_gps_p, w_xy_gps_v);
@@ -1259,20 +1198,21 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		}
 
 		/* inertial filter correction for altitude */
-		inertial_filter_correct(corr_baro, dt, z_est, 0, params.w_z_baro);
+//		inertial_filter_correct(corr_baro, dt, z_est, 0, params.w_z_baro*0);
+// TODO uncomment
+
 
 		// temporary - z after correction
-		verbose_signal3=z_est[0];
-//		verbose_counter3++;
+		verbose_signal2=z_est[0];
 
-		// TODO tune weight. maybe add velocity correction??
+		// TODO remove this block. It doesn't make anything at all
 		// TODO check if corr_sonar is always zero inside the if. Should it be?
 		if(sonar_valid){
 			if (corr_sonar>0.0001f || corr_sonar<-0.0001f) {
 				printf("[inav] Something wrong 7 1. CHECK bla bla nsh bla.\n");
 			}
-			// if z_est is corrected directly with sonar, then corr_sonar will be 0 here
-			inertial_filter_correct(corr_sonar, dt, z_est, 0, sonar_weight);
+			// if z_est is corrected directly with sonar (which it is), then corr_sonar will be 0 here
+//			inertial_filter_correct(corr_sonar, dt, z_est, 0, sonar_weight);
 		 }
 
 /*		if (use_gps_z) {
@@ -1391,43 +1331,21 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 
 		// temporary - prints
-		printf("%.4f , %.4f , %.4f , %.4f , 0 , 0 , 0 , %4.4f , %.4f , %b , %b , ",
-			   (double)verbose_signal1,
-			   (double)verbose_signal2,
-			   (double)verbose_signal3,
-			   (double)verbose_signal4,
-			   //(double)verbose_signal5,
-			   //(double)verbose_signal6,
-			   //(double)verbose_signal7,
-			   (double)verbose_signal8,
-			   (double)verbose_signal9,
-			   verbose_signal10,
-			   verbose_signal11);
-		printf("0 , 0 , 0 , 0 , 0 , %.3f , 0 , 0 , 0 , 0 , %.4f , ",
-/*			   verbose_counter1, // same as 2,3,4,5,6,7
-			   verbose_counter8,
-			   verbose_counter9,
-			   verbose_counter10,
-			   verbose_counter11,
-*/			   (double)verbose_signal12,
-			   //verbose_signal13,
-//			   (double)verbose_signal14,
-//			   (double)verbose_signal15,
-//			   (double)verbose_signal16,
-			   (double)verbose_signal17);
-		printf("%b , 0 , 0 , 0 , ",
-			   new_verbose_signal1);
-//			   new_verbose_signal2,
-//			   new_verbose_signal3,
-//			   new_verbose_signal4,
+		printf("%.4f , %.4f , %.4f , %b , %.4f , %.4f , ",
+			   (double)verbose_signal1,			// z at beginning
+			   (double)verbose_signal2,			// z at end
+			   (double)verbose_signal3,			// sonar measurement
+			   new_verbose_signal1,			// flag sonar valid
+			   (double)new_verbose_signal5,		// baro measurement
+			   (double)verbose_signal7);			// baro offset
 
 		printf("%.4f , %.4f , %.4f , %.4f , %.4f , %.4f \n",
-			   (double)new_verbose_signal5,
-			   (double)new_verbose_signal6,
-			   (double)new_verbose_signal7,
-			   (double)new_verbose_signal8,
-			   (double)new_verbose_signal9,
-			   (double)new_verbose_signal10);
+			   (double)new_verbose_signal6,		// baro correction
+			   (double)new_verbose_signal3,		// filtered baro
+			   (double)new_verbose_signal11,	// acc measurement
+			   (double)new_verbose_signal10,	// acc bias
+			   (double)new_verbose_signal4,		// filtered z acceleration
+			   (double)new_verbose_signal12);	// acc measurement corrected, before filter
 
 
 
@@ -1449,13 +1367,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			if (buf_ptr >= EST_BUF_SIZE) {
 				buf_ptr = 0;
 			}
-
-			// temporary - final z estimate
-			verbose_signal4=z_est[0];
-			verbose_signal10=sonar_valid;
-			//verbose_counter10++;
-			verbose_signal11=sonar_updated;
-			//verbose_counter11++;
 
 			/* publish local position */
 			local_pos.xy_valid = can_estimate_xy;
@@ -1519,19 +1430,23 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	mavlink_log_info(mavlink_fd, "[inav] stopped");
 	thread_running = false;
 	return 0;
+
+
+
+	// TODO change all that is GPS to come from the sonar. (almost) done
+	// TODO make sure that giving z_est[1] (velocity) from sonar measurements works
+	// TODO make acceptable_change dependent on z_est[0] (not sure. initially, it was. now I will have to think about it later)
+	
+	// after getting to all the code errors:
+	// TODO tune params.sonar_err and params.sonar_filt to be able to get through disturbances without any damage to the estimate.
+	
+	// TODO optimize filters
+	
+	
+	// don't forget later:
+	// TODO take out the prints "Something wrong"
+	// TODO remove dist_bottom if not needed
+	// TODO remove buffer if not needed
+	// TODO remove already_printed_flag
+
 }
-// TODO change all that is GPS to come from the sonar. (almost) done
-// TODO make sure that giving z_est[1] (velocity) from sonar measurements works
-// TODO make acceptable_change dependent on z_est[0] (not sure. initially, it was. now I will have to think about it later)
-
-// after getting to all the code errors:
-// TODO tune params.sonar_err and params.sonar_filt to be able to get through disturbances without any damage to the estimate.
-
-// TODO optimize filters
-
-
-// don't forget later:
-// TODO take out the prints "Something wrong"
-// TODO remove dist_bottom if not needed
-// TODO remove buffer if not needed
-// TODO remove already_printed_flag
