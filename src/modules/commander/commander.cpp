@@ -278,7 +278,7 @@ int commander_main(int argc, char *argv[])
 		daemon_task = task_spawn_cmd("commander",
 					     SCHED_DEFAULT,
 					     SCHED_PRIORITY_MAX - 40,
-					     3200,
+					     3400,
 					     commander_thread_main,
 					     (argv) ? (char * const *)&argv[2] : (char * const *)NULL);
 
@@ -727,6 +727,9 @@ bool handle_command(struct vehicle_status_s *status_local, const struct safety_s
 	case VEHICLE_CMD_CUSTOM_2:
 	case VEHICLE_CMD_PAYLOAD_PREPARE_DEPLOY:
 	case VEHICLE_CMD_PAYLOAD_CONTROL_DEPLOY:
+	case VEHICLE_CMD_DO_MOUNT_CONTROL:
+	case VEHICLE_CMD_DO_MOUNT_CONTROL_QUAT:
+	case VEHICLE_CMD_DO_MOUNT_CONFIGURE:
 		/* ignore commands that handled in low prio loop */
 		break;
 
@@ -964,19 +967,6 @@ int commander_thread_main(int argc, char *argv[])
 
 	int ret;
 
-	pthread_attr_t commander_low_prio_attr;
-	pthread_attr_init(&commander_low_prio_attr);
-	pthread_attr_setstacksize(&commander_low_prio_attr, 2400);
-
-	struct sched_param param;
-	(void)pthread_attr_getschedparam(&commander_low_prio_attr, &param);
-
-	/* low priority */
-	param.sched_priority = SCHED_PRIORITY_DEFAULT - 50;
-	(void)pthread_attr_setschedparam(&commander_low_prio_attr, &param);
-	pthread_create(&commander_low_prio_thread, &commander_low_prio_attr, commander_low_prio_loop, NULL);
-	pthread_attr_destroy(&commander_low_prio_attr);
-
 	/* Start monitoring loop */
 	unsigned counter = 0;
 	unsigned stick_off_counter = 0;
@@ -1140,6 +1130,20 @@ int commander_thread_main(int argc, char *argv[])
 	bool arming_state_changed = false;
 	bool main_state_changed = false;
 	bool failsafe_old = false;
+
+	/* initialize low priority thread */
+	pthread_attr_t commander_low_prio_attr;
+	pthread_attr_init(&commander_low_prio_attr);
+	pthread_attr_setstacksize(&commander_low_prio_attr, 2100);
+
+	struct sched_param param;
+	(void)pthread_attr_getschedparam(&commander_low_prio_attr, &param);
+
+	/* low priority */
+	param.sched_priority = SCHED_PRIORITY_DEFAULT - 50;
+	(void)pthread_attr_setschedparam(&commander_low_prio_attr, &param);
+	pthread_create(&commander_low_prio_thread, &commander_low_prio_attr, commander_low_prio_loop, NULL);
+	pthread_attr_destroy(&commander_low_prio_attr);
 
 	while (!thread_should_exit) {
 
