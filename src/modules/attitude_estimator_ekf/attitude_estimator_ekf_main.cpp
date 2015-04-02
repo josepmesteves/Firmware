@@ -549,6 +549,8 @@ const unsigned int loop_interval_alarm = 6500;	// loop interval in microseconds
 							Rot_matrix,
 							euler,
 							debugOutput);
+					
+					printf("euler[0]= %f, euler[0]= %f, euler[0]= %f.\n",(double)euler[0],(double)euler[1],(double)euler[2]);
 
 					/* swap values for next iteration, check for fatal inputs */
 					if (isfinite(euler[0]) && isfinite(euler[1]) && isfinite(euler[2])) {
@@ -556,6 +558,7 @@ const unsigned int loop_interval_alarm = 6500;	// loop interval in microseconds
 						memcpy(x_aposteriori_k, x_aposteriori, sizeof(x_aposteriori_k));
 
 					} else {
+						printf("Got out here!\n");
 						/* due to inputs or numerical failure the output is invalid, skip it */
 						continue;
 					}
@@ -564,6 +567,7 @@ const unsigned int loop_interval_alarm = 6500;	// loop interval in microseconds
 						printf("[attitude estimator ekf] sensor data missed! (%llu)\n", raw.timestamp - last_data);
 
 					last_data = raw.timestamp;
+					printf("Still inside.\n");
 
 					/* send out */
 					att.timestamp = raw.timestamp;
@@ -600,13 +604,18 @@ const unsigned int loop_interval_alarm = 6500;	// loop interval in microseconds
 					if (isfinite(att.roll) && isfinite(att.pitch) && isfinite(att.yaw)) {
 						// Broadcast
 						orb_publish(ORB_ID(vehicle_attitude), pub_att, &att);
+						printf("Published new Att.\n");
 
 					} else {
+						printf("Could not publish new Att.\n");
 						warnx("NaN in roll/pitch/yaw estimate!");
 					}
 
 					perf_end(ekf_loop_perf);
 				}
+			}
+			else {
+				printf("1\n");
 			}
 		}
 

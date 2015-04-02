@@ -8,7 +8,9 @@
 # INAV, which defaults to 0 now. 
 if param compare INAV_ENABLED 1
 then
+	mb12xx start
 	attitude_estimator_ekf start
+	#attitude_estimator_so3 start
 	position_estimator_inav start
 else
 	ekf_att_pos_estimator start

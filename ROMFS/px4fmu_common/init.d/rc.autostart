@@ -186,6 +186,16 @@ then
 fi
 
 #
+# Hexakopter (mikrokopter)
+#
+
+if param compare SYS_AUTOSTART 7010
+then
+	sh /etc/init.d/7010_hexakopter_+
+fi
+
+
+#
 # Octo X
 #
 
