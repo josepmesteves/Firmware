@@ -707,6 +707,9 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				}
 			}
 			
+			
+			
+			// Disable sonar for test purposes only
 //			if (sonar_valid_test_ctr<2500) { // 10 seconds at 250Hz
 			if (sonar_valid_test_ctr<2000*(temporary_var/4)) { // 8 seconds at 250Hz
 				sonar_valid_test_ctr++;
@@ -1299,7 +1302,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			}
 		}
 */
-		if (sonar_not_valid_ctr > 20) {
+		if (sonar_not_valid_ctr > 25) {
 			w_z_pos_baro = 0.005f;
 		} else {
 			w_z_pos_baro = 0.0f;
